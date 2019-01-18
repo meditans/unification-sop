@@ -204,7 +204,7 @@ unionSubst (Substitution s1) (Substitution s2) = Substitution $ TM.unionWith uni
            -> Constrained WellFormed (IM.IntMap :.: Term) a
     union' (Constrained (Comp m1)) (Constrained (Comp m2))  = Constrained $ Comp (IM.union m1 m2)
 
-mapSubst :: (forall x. Term x -> Term x) -> Substitution -> Substitution
+mapSubst :: (forall x. WellFormed x => Term x -> Term x) -> Substitution -> Substitution
 mapSubst f (Substitution s) = Substitution $ TM.hoist help1 s
   where
     help1 :: Constrained WellFormed (IM.IntMap :.: Term) x
@@ -341,8 +341,8 @@ instance {-# overlappable #-}
 -- >>> ftv acceptable
 -- FreeVars { [Char] -> Const (fromList [1]), Foo -> Const (fromList [1]) }
 
--- instance Substitutable Substitution where
-  -- s1 @@ s2 = unionSubst (mapSubst (s1 @@) s2) s1
+instance Substitutable Substitution where
+  s1 @@ s2 = unionSubst (mapSubst (s1 @@) s2) s1
 
 unify :: forall a. (Eq a, Typeable a, WellFormed a) => Term a -> Term a -> Maybe Substitution
 unify (Con t1) (Con t2)
