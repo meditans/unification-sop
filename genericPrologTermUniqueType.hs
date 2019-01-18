@@ -157,19 +157,18 @@ withConstrained f (Constrained fa) = f fa
 
 -- Questo non va bene perche' non puo' essere applicato parzialmente.
 -- type WellFormed a = (Show (Term a), Substitutable (Term a))
-class WellFormed a where
+class    (Show (Term a), Substitutable (Term a)) => WellFormed a where
 instance (Show (Term a), Substitutable (Term a)) => WellFormed a where
 
-newtype SubstitutionGen a = SubstitutionGen (TM.TypeRepMap (Constrained a (IM.IntMap :.: Term)))
-
-newtype Substitution = Substitution (TM.TypeRepMap (Constrained (Compose Show Term) (IM.IntMap :.: Term)))
--- type Substitution = SubstitutionGen WellFormed
+newtype Substitution = Substitution (TM.TypeRepMap (Constrained WellFormed (IM.IntMap :.: Term)))
 
 -- Now, convenient operation to insert something
 emptySubst :: Substitution
 emptySubst = Substitution TM.empty
 
-insertSubst :: forall a. (Show (Term a), Typeable a) => Int -> Term a -> Substitution -> Substitution
+insertSubst
+  :: forall a. (Show (Term a), Substitutable (Term a), Typeable a)
+  => Int -> Term a -> Substitution -> Substitution
 insertSubst i ta (Substitution subst) =
   case TM.member @a subst of
     True  -> Substitution $ TM.adjust @a (\(Constrained (Comp m)) -> Constrained $ Comp (IM.insert i ta m)) subst
@@ -200,16 +199,16 @@ lookupSubst i (Substitution subst) = do
 unionSubst :: Substitution -> Substitution -> Substitution
 unionSubst (Substitution s1) (Substitution s2) = Substitution $ TM.unionWith union' s1 s2
   where
-    union' :: Constrained (Compose Show Term) (IM.IntMap :.: Term) a
-           -> Constrained (Compose Show Term) (IM.IntMap :.: Term) a
-           -> Constrained (Compose Show Term) (IM.IntMap :.: Term) a
+    union' :: Constrained WellFormed (IM.IntMap :.: Term) a
+           -> Constrained WellFormed (IM.IntMap :.: Term) a
+           -> Constrained WellFormed (IM.IntMap :.: Term) a
     union' (Constrained (Comp m1)) (Constrained (Comp m2))  = Constrained $ Comp (IM.union m1 m2)
 
 mapSubst :: (forall x. Term x -> Term x) -> Substitution -> Substitution
 mapSubst f (Substitution s) = Substitution $ TM.hoist help1 s
   where
-    help1 :: Constrained (Compose Show Term) (IM.IntMap :.: Term) x
-          -> Constrained (Compose Show Term) (IM.IntMap :.: Term) x
+    help1 :: Constrained WellFormed (IM.IntMap :.: Term) x
+          -> Constrained WellFormed (IM.IntMap :.: Term) x
     help1 (Constrained (Comp a)) = Constrained . Comp $ IM.map f a
 
 -- >>> :set -XTypeApplications
@@ -233,6 +232,9 @@ mapSubst f (Substitution s) = Substitution $ TM.hoist help1 s
 lookupTM :: forall k (a :: k) f. Typeable a => TR.TypeRep a -> TM.TypeRepMap f -> Maybe (f a)
 lookupTM _ = TM.lookup
 
+ssss :: forall a. WellFormed a => (IM.IntMap :.: Term) a -> String
+ssss a = show . unComp $ a
+
 instance Show Substitution where
   show (Substitution s) =
     let
@@ -245,7 +247,8 @@ instance Show Substitution where
               Just HRefl ->
                 case TR.withTypeable a $ lookupTM a s of
                   Nothing -> error "This case should be impossible, given that I'm searching by key"
-                  Just tm -> show a ++ " -> " ++ withConstrained (show . unComp) tm
+                  -- Just tm -> show a ++ " -> " ++ withConstrained @WellFormed (show . unComp) tm
+                  Just tm -> show a ++ " -> " ++ withConstrained @WellFormed (show . unComp) tm
     in "Substitution { " ++ intercalate ", " cs ++ " }"
 
 -- >>> :set -XTypeApplications
@@ -341,7 +344,7 @@ instance {-# overlappable #-}
 -- instance Substitutable Substitution where
   -- s1 @@ s2 = unionSubst (mapSubst (s1 @@) s2) s1
 
-unify :: forall a. (Eq a, Typeable a, Show (Term a)) => Term a -> Term a -> Maybe Substitution
+unify :: forall a. (Eq a, Typeable a, WellFormed a) => Term a -> Term a -> Maybe Substitution
 unify (Con t1) (Con t2)
   | t1 == t2  = Just emptySubst
   | otherwise = Nothing
