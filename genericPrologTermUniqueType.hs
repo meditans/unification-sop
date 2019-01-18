@@ -12,6 +12,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 -- | In this version, we consider (1, Int) and (1, Char) different variables. In
 -- this way, we don't have to track which variable has which type. Indexes of
@@ -32,6 +33,8 @@ import Text.Show.Combinators
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IS
 import Data.Functor.Const
+import Control.Monad.State
+import Control.Monad.Except
 
 -- The usual generic-sop based infrastructure
 
@@ -343,8 +346,16 @@ instance {-# overlappable #-}
 
 instance Substitutable Substitution where
   s1 @@ s2 = unionSubst (mapSubst (s1 @@) s2) s1
+  -- ftv s = undefined
 
-unify :: forall a. (Eq a, Typeable a, WellFormed a) => Term a -> Term a -> Maybe Substitution
+data UnificationError = UnificationError
+
+newtype Unification a
+  = Unification
+  { unUnification :: ExceptT UnificationError (State Substitution) a }
+  deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
+
+unify :: forall a. (Eq a, Typeable a, WellFormed a, All SListI (Code a)) => Term a -> Term a -> Maybe Substitution
 unify (Con t1) (Con t2)
   | t1 == t2  = Just emptySubst
   | otherwise = Nothing
@@ -354,4 +365,21 @@ unify (Var i) t
 unify t (Var i)
   | i `occursIn` t = Nothing
   | otherwise      = Just $ insertSubst @a i t emptySubst
+unify (Rec t1) (Rec t2)
+  | sameConstructor t1 t2 =
+    let
+      mt1   = hliftA (Comp . Just) t1
+      emt1  = hexpand (Comp Nothing) mt1
+      pairs = hliftA2 unsafePair emt1 t2
+    in undefined
+  | otherwise     = Nothing
 unify _ _ = undefined
+
+data Pair a = Pair a a
+
+unsafePair :: forall a. (:.:) Maybe Term a -> Term a -> (Pair :.: Term) a
+unsafePair (Comp (Just t1)) t2 = Comp $ Pair t1 t2
+unsafePair (Comp Nothing)   _  = error "Structures should be matched"
+
+sameConstructor :: SOP a b -> SOP a b -> Bool
+sameConstructor a b = hindex a == hindex b
