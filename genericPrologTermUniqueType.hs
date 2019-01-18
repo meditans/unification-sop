@@ -142,6 +142,40 @@ lowerInitial (c:cs) = toLower c : cs
 -- example.
 
 --------------------------------------------------------------------------------
+-- Eq instances
+--------------------------------------------------------------------------------
+instance {-# overlaps #-} Eq (Term Int) where
+  Con i == Con j = i == j
+  Var i == Var j = i == j
+  _     == _     = False
+
+instance {-# overlaps #-} Eq (Term Char) where
+  Con c == Con d = c == d
+  Var i == Var j = i == j
+  _     == _     = False
+
+instance {-# overlaps #-} Eq (Term String) where
+  Con s == Con t = s == t
+  Var i == Var j = i == j
+  _     == _     = False
+
+instance {-# overlappable #-}
+         ( Eq a, Generic a, HasDatatypeInfo a
+         , All2 (Compose Eq Term) (Code a))
+         => Eq (Term a) where
+  Con s  == Con t  = s == t
+  Var i  == Var j  = i == j
+  Rec r1 == Rec r2 = go r1 r2
+    where
+      go :: forall xss. (All2 (Compose Eq Term) xss) => SOP Term xss -> SOP Term xss -> Bool
+      go (SOP (Z xs))  (SOP (Z ys))  = and . hcollapse $ hcliftA2 (Proxy @(Compose Eq Term)) eq xs ys
+      go (SOP (S xss)) (SOP (S yss)) = go (SOP xss) (SOP yss)
+
+      eq :: forall (a :: *). Eq (Term a) => Term a -> Term a -> K Bool a
+      eq a b = K (a == b)
+  _     == _     = False
+
+--------------------------------------------------------------------------------
 -- Patterns for destructuring
 --------------------------------------------------------------------------------
 -- We should probably supply some patterns for destructuring
