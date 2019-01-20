@@ -13,6 +13,9 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE InstanceSigs #-}
 
 -- | In this version, we consider (1, Int) and (1, Char) different variables. In
 -- this way, we don't have to track which variable has which type. Indexes of
@@ -170,8 +173,9 @@ instance {-# overlappable #-}
       go :: forall xss. (All2 (Compose Eq Term) xss) => SOP Term xss -> SOP Term xss -> Bool
       go (SOP (Z xs))  (SOP (Z ys))  = and . hcollapse $ hcliftA2 (Proxy @(Compose Eq Term)) eq xs ys
       go (SOP (S xss)) (SOP (S yss)) = go (SOP xss) (SOP yss)
+      go _ _ = False
 
-      eq :: forall (a :: *). Eq (Term a) => Term a -> Term a -> K Bool a
+      eq :: forall (x :: *). Eq (Term x) => Term x -> Term x -> K Bool x
       eq a b = K (a == b)
   _     == _     = False
 
@@ -194,8 +198,8 @@ withConstrained f (Constrained fa) = f fa
 
 -- Questo non va bene perche' non puo' essere applicato parzialmente.
 -- type WellFormed a = (Show (Term a), Substitutable (Term a))
-class    (Show (Term a), Substitutable (Term a)) => WellFormed a where
-instance (Show (Term a), Substitutable (Term a)) => WellFormed a where
+class    (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a)) => WellFormed (a :: Type) where
+instance (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a)) => WellFormed a where
 
 newtype Substitution = Substitution (TM.TypeRepMap (Constrained WellFormed (IM.IntMap :.: Term)))
 
@@ -204,7 +208,7 @@ emptySubst :: Substitution
 emptySubst = Substitution TM.empty
 
 insertSubst
-  :: forall a. (Show (Term a), Substitutable (Term a), Typeable a)
+  :: forall a. (WellFormed a, Typeable a)
   => Int -> Term a -> Substitution -> Substitution
 insertSubst i ta (Substitution subst) =
   case TM.member @a subst of
@@ -218,6 +222,12 @@ lookupSubst :: forall a. (Typeable a) => Int -> Substitution -> Maybe (Term a)
 lookupSubst i (Substitution subst) = do
   Constrained (Comp internalMap) <- TM.lookup @a subst
   IM.lookup i internalMap
+
+-- lookupSubst' :: forall (k :: Type) a. (Typeable a) => TR.TypeRep k -> Int -> Substitution -> Maybe (Term a)
+-- lookupSubst' tr i s = TR.withTypeable @Type tr (lookupSubst i s)
+
+  -- Constrained (Comp internalMap) <- TM.lookup @a subst
+  -- IM.lookup i internalMap
 
 -- I also have to implement union of substitutions, with the same bias of those
 -- in Data.Map I expect, which means that I prefer things that exists in the
@@ -284,7 +294,6 @@ instance Show Substitution where
               Just HRefl ->
                 case TR.withTypeable a $ lookupTM a s of
                   Nothing -> error "This case should be impossible, given that I'm searching by key"
-                  -- Just tm -> show a ++ " -> " ++ withConstrained @WellFormed (show . unComp) tm
                   Just tm -> show a ++ " -> " ++ withConstrained @WellFormed (show . unComp) tm
     in "Substitution { " ++ intercalate ", " cs ++ " }"
 
@@ -380,35 +389,201 @@ instance {-# overlappable #-}
 
 instance Substitutable Substitution where
   s1 @@ s2 = unionSubst (mapSubst (s1 @@) s2) s1
-  -- ftv s = undefined
+  ftv _ = undefined
 
-data UnificationError = UnificationError
+data UnificationError = IncompatibleUnification | OccursCheckFailed | UnificationError
+  deriving (Show)
 
 newtype Unification a
   = Unification
   { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
-unify :: forall a. (Eq a, Typeable a, WellFormed a, All SListI (Code a)) => Term a -> Term a -> Maybe Substitution
-unify (Con t1) (Con t2)
-  | t1 == t2  = Just emptySubst
-  | otherwise = Nothing
-unify (Var i) t
-  | i `occursIn` t = Nothing
-  | otherwise      = Just $ insertSubst @a i t emptySubst
-unify t (Var i)
-  | i `occursIn` t = Nothing
-  | otherwise      = Just $ insertSubst @a i t emptySubst
-unify (Rec t1) (Rec t2)
-  | sameConstructor t1 t2 =
-    let
-      mt1   = hliftA (Comp . Just) t1
-      emt1  = hexpand (Comp Nothing) mt1
-      pairs = hliftA2 unsafePair emt1 t2
-    in undefined
-  | otherwise     = Nothing
-unify _ _ = undefined
+--------------------------------------------------------------------------------
+-- Attempts at finding a type for the unify stuff
+--------------------------------------------------------------------------------
 
+-- class WellFormedR a where
+
+-- instance {-# overlaps #-} WellFormedR Int where
+
+-- instance {-# overlappable #-}
+--   ( WellFormed a, Generic a, HasDatatypeInfo a
+--   , All2 WellFormedR (Code a))
+--   => WellFormedR a where
+
+-- class (WellFormed a, All2 WellFormedS (Code a)) => WellFormedS a where
+-- instance WellFormedS Int where
+
+-- This is not possible as All2 is a synonym
+-- instance {-# overlaps #-} All2 Eq (Code Int) where
+
+-- class Complex a where
+-- instance Complex a => All2 WellFormedT (Code a)
+-- class (WellFormed a, Complex a => All2 WellFormedT (Code a)) => WellFormedT a where
+-- instance WellFormedT Int where
+
+--------------------------------------------------------------------------------
+-- Attempt which is similar to the previous Substitutable mechanism (with
+-- overloaded classes)
+--------------------------------------------------------------------------------
+
+-- This class is clearly bloated, we should separate the recursion in the typeclass
+-- and implement the methods as stand alone ones.
+class Unifiable a where
+  unify    :: Term a -> Term a -> Unification Substitution
+  unifyVar :: Int    -> Term a -> Unification Substitution
+  occursCheck :: forall (k :: Type). TR.TypeRep k -> Int -> Term a -> Unification ()
+  -- | Replace i with a in b
+  replace       :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term a -> Term a
+  replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term a -> Term a
+  replaceSubst  :: Substitution -> Term a -> Term a
+  adjustSubstitution :: Int -> Term a -> Substitution -> Substitution
+
+instance {-# overlaps #-} Unifiable Int where
+  unify (Con i) (Con j)
+    | i == j = get
+    | otherwise = throwError IncompatibleUnification
+  unify (Var i) t = unifyVar i t
+  unify t (Var i) = unifyVar i t
+  unify _ _       = error "I can't construct that value"
+  unifyVar i t = do
+    theta <- get
+    case lookupSubst @Int i theta of
+      Just t1 -> unify t1 t
+      Nothing -> do
+        case t of
+          Var j -> case lookupSubst @Int j theta of
+            Just t2 -> unifyVar i t2
+            Nothing -> undefined -- The same thing
+          _     -> do
+            occursCheck (TR.typeRep @Int) i t
+            let t' = replaceSubst theta t
+            -- void $ adjustSubstitution
+            modify (insertSubst @Int i t')
+            undefined
+
+  occursCheck :: TR.TypeRep a -> Int -> Term Int -> Unification ()
+  occursCheck tr i (Var j) =
+    case TR.eqTypeRep tr (TR.typeRep @Int) of
+      Just _  ->
+        if i == j
+        then throwError OccursCheckFailed
+        else undefined -- Here we check that it doesn't appear in the referenced term
+      Nothing -> undefined -- Here we should still check that it doesn't appear recursively in the referenced term
+  occursCheck _ _ (Con _) = pure ()
+  occursCheck _ _ (Rec _) = error "Cannot construct this value"
+
+  replace :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term Int -> Term Int
+  replace i a (Var j) =
+    case TR.eqTypeRep (TR.typeRep @Int) (TR.typeRep @k) of
+      Just HRefl -> if i == j then a else (Var j)
+      Nothing    -> Var j
+  replace _ _ (Con c) = Con c
+  replace _ _ (Rec _) = error "Cannot construct this value"
+
+  replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term Int -> Term Int
+  replaceIntMap im a = IM.foldrWithKey replace a im
+
+  replaceSubst  :: Substitution -> Term Int -> Term Int
+  replaceSubst (Substitution sub) t = foldl f t (TM.keys sub)
+    where
+      f :: Term Int -> TR.SomeTypeRep -> Term Int
+      f tacc (TR.SomeTypeRep ty) =
+        case (TR.eqTypeRep (TR.typeRepKind ty) (TR.typeRep @Type)) of
+          Nothing    -> error "Kinds other then Type are not supported"
+          Just HRefl ->
+            case TR.withTypeable ty $ lookupTM ty sub of
+              Nothing -> error "This case should be impossible, given that I'm searching by key"
+              Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap im tacc
+
+  adjustSubstitution _ _ = undefined
+  -- adjustSubstitution :: Int -> Term Int -> Substitution -> Substitution
+  -- adjustSubstitution i t = mapSubst _what
+  -- The difficulty here is that it has to work on every member of the
+  -- substitution. This means that every member of the substitution should
+  -- implement the Unifiable interface! This calls for a refactoring of the
+  -- classes.
+
+instance {-# overlappable #-}
+  ( Typeable a, HasDatatypeInfo a, Eq a
+  , All2 Unifiable (Code a), All SListI (Code a))
+  => Unifiable a where
+  unify (Con i) (Con j)
+    | i == j = get
+    | otherwise = throwError IncompatibleUnification
+  unify (Var i) t = unifyVar i t
+  unify t (Var i) = unifyVar i t
+  unify (Rec t1) (Rec t2)
+    | sameConstructor t1 t2 =
+      let
+        mt1   = hliftA  (Comp . Just) t1
+        emt1  = hexpand (Comp Nothing) mt1
+        pairs = hliftA2 unsafePair emt1 t2
+      in do
+        hctraverse_ (Proxy @Unifiable) (\(Comp (Pair s1 s2)) -> void $ unify s1 s2) pairs
+        get
+    | otherwise     = throwError IncompatibleUnification
+  unify _ _ = undefined
+  unifyVar = undefined
+
+-- lookupSubst :: forall a. (Typeable a) => Int -> Substitution -> Maybe (Term a)
+  occursCheck tr i (Var j) =
+    case TR.eqTypeRep tr (TR.typeRep @a) of
+      Just _  ->
+        if i == j
+        then throwError OccursCheckFailed
+        else do -- Here we check that it doesn't appear in the referenced term
+          gets (lookupSubst @a j) >>= mapM_ (occursCheck tr i)
+      Nothing -> do -- Here we should still check that it doesn't appear recursively in the referenced term
+        gets (lookupSubst @a j) >>= mapM_ (occursCheck tr i)
+  occursCheck _ _  (Con _) = pure ()
+  occursCheck tr i (Rec r) = hctraverse_ (Proxy @Unifiable) (occursCheck tr i) r
+
+  replace :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term a -> Term a
+  replace i a (Var j) =
+    case TR.eqTypeRep (TR.typeRep @a) (TR.typeRep @k) of
+      Just HRefl -> if i == j then a else (Var j)
+      Nothing    -> Var j
+  replace _ _ (Con c) = Con c
+  replace i a (Rec t) = Rec $ hcmap (Proxy @Unifiable) (replace i a) t
+
+  replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term a -> Term a
+  replaceIntMap im a = IM.foldrWithKey replace a im
+
+  replaceSubst  :: Substitution -> Term a -> Term a
+  replaceSubst (Substitution sub) t = foldl f t (TM.keys sub)
+    where
+      f :: Term a -> TR.SomeTypeRep -> Term a
+      f tacc (TR.SomeTypeRep ty) =
+        case (TR.eqTypeRep (TR.typeRepKind ty) (TR.typeRep @Type)) of
+          Nothing    -> error "Kinds other then Type are not supported"
+          Just HRefl ->
+            case TR.withTypeable ty $ lookupTM ty sub of
+              Nothing -> error "This case should be impossible, given that I'm searching by key"
+              Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap im tacc
+
+  adjustSubstitution _ _ = undefined
+
+-- We need the equivalent of Data.Map.foldrWithKey for our substitutions, so
+-- that we can write the correct term.
+
+-- Iniziamo dalla base: data una IntMap (Term a) riesco ad applicare tutto ad un
+
+
+--------------------------------------------------------------------------------
+-- Unify function
+--------------------------------------------------------------------------------
+
+-- unifyVar :: Int -> Term a -> Unification Substitution
+-- unifyVar = undefined
+
+--   | i `occursIn` t = Nothing
+--   | otherwise      = Just $ insertSubst @a i t emptySubst
+-- unify t (Var i)
+--   | i `occursIn` t = Nothing
+--   | otherwise      = Just $ insertSubst @a i t emptySubst
+--   
 data Pair a = Pair a a
 
 unsafePair :: forall a. (:.:) Maybe Term a -> Term a -> (Pair :.: Term) a
