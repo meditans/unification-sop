@@ -438,7 +438,6 @@ class Unifiable a where
   replace       :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term a -> Term a
   replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term a -> Term a
   replaceSubst  :: Substitution -> Term a -> Term a
-  adjustSubstitution :: Int -> Term a -> Substitution -> Substitution
 
 instance {-# overlaps #-} Unifiable Char where
 instance {-# overlaps #-} Unifiable String where
@@ -461,7 +460,7 @@ instance {-# overlaps #-} Unifiable Int where
           _     -> do
             occursCheck (TR.typeRep @Int) i t
             let t' = replaceSubst theta t
-            -- void $ adjustSubstitution
+            modify (adjustSubstitution i t')
             modify (insertSubst @Int i t')
             undefined
 
@@ -499,8 +498,6 @@ instance {-# overlaps #-} Unifiable Int where
               Nothing -> error "This case should be impossible, given that I'm searching by key"
               Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap im tacc
 
-  adjustSubstitution :: Int -> Term Int -> Substitution -> Substitution
-  adjustSubstitution i t = mapSubst (replace i t)
 
 instance {-# overlappable #-}
   ( Typeable a, Eq a, Generic a , All2 Unifiable (Code a))
@@ -559,7 +556,8 @@ instance {-# overlappable #-}
               Nothing -> error "This case should be impossible, given that I'm searching by key"
               Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap im tacc
 
-  adjustSubstitution _ _ = undefined
+adjustSubstitution :: (Typeable a) => Int -> Term a -> Substitution -> Substitution
+adjustSubstitution i t = mapSubst (replace i t)
 
 -- We need the equivalent of Data.Map.foldrWithKey for our substitutions, so
 -- that we can write the correct term.
