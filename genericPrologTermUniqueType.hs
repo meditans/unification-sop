@@ -198,8 +198,8 @@ withConstrained f (Constrained fa) = f fa
 
 -- Questo non va bene perche' non puo' essere applicato parzialmente.
 -- type WellFormed a = (Show (Term a), Substitutable (Term a))
-class    (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a)) => WellFormed (a :: Type) where
-instance (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a)) => WellFormed a where
+class    (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a), Unifiable a) => WellFormed (a :: Type) where
+instance (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a), Unifiable a) => WellFormed a where
 
 newtype Substitution = Substitution (TM.TypeRepMap (Constrained WellFormed (IM.IntMap :.: Term)))
 
@@ -440,6 +440,8 @@ class Unifiable a where
   replaceSubst  :: Substitution -> Term a -> Term a
   adjustSubstitution :: Int -> Term a -> Substitution -> Substitution
 
+instance {-# overlaps #-} Unifiable Char where
+instance {-# overlaps #-} Unifiable String where
 instance {-# overlaps #-} Unifiable Int where
   unify (Con i) (Con j)
     | i == j = get
@@ -497,17 +499,11 @@ instance {-# overlaps #-} Unifiable Int where
               Nothing -> error "This case should be impossible, given that I'm searching by key"
               Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap im tacc
 
-  adjustSubstitution _ _ = undefined
-  -- adjustSubstitution :: Int -> Term Int -> Substitution -> Substitution
-  -- adjustSubstitution i t = mapSubst _what
-  -- The difficulty here is that it has to work on every member of the
-  -- substitution. This means that every member of the substitution should
-  -- implement the Unifiable interface! This calls for a refactoring of the
-  -- classes.
+  adjustSubstitution :: Int -> Term Int -> Substitution -> Substitution
+  adjustSubstitution i t = mapSubst (replace i t)
 
 instance {-# overlappable #-}
-  ( Typeable a, HasDatatypeInfo a, Eq a
-  , All2 Unifiable (Code a), All SListI (Code a))
+  ( Typeable a, Eq a, Generic a , All2 Unifiable (Code a))
   => Unifiable a where
   unify (Con i) (Con j)
     | i == j = get
