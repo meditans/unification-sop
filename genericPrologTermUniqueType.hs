@@ -38,6 +38,7 @@ import qualified Data.IntSet as IS
 import Data.Functor.Const
 import Control.Monad.State
 import Control.Monad.Except
+import GHC.Exts (toList)
 
 -- The usual generic-sop based infrastructure
 
@@ -47,7 +48,7 @@ data Term a where
   Rec :: SOP Term (Code a) -> Term a
 
 -- And an example
-data Foo = FooI Int | FooS String Foo deriving (Show, GHC.Generic)
+data Foo = FooI Int | FooS String Foo deriving (Show, Eq, GHC.Generic)
 
 instance Generic Foo
 instance HasDatatypeInfo Foo
@@ -215,8 +216,13 @@ insertSubst i ta (Substitution subst) =
     True  -> Substitution $ TM.adjust @a (\(Constrained (Comp m)) -> Constrained $ Comp (IM.insert i ta m)) subst
     False -> Substitution $ TM.insert @a (Constrained . Comp $ IM.singleton i ta) subst
 
-ex_substitution_2 :: Substitution
-ex_substitution_2 = insertSubst @Char 1 (Con 'c') $ insertSubst @Int 1 (Con 1000) emptySubst
+ex_substitution :: Substitution
+ex_substitution = insertSubst @Char 1 (Con 'c') $ insertSubst @Int 1 (Con 1000) emptySubst
+ex_substitution2 :: Substitution
+ex_substitution2 = insertSubst @Foo 1 ex5' emptySubst
+
+-- >>> ex_substitution
+-- Substitution { Int -> fromList [(1,Con 1000)], Char -> fromList [(1,Con 'c')] }
 
 lookupSubst :: forall a. (Typeable a) => Int -> Substitution -> Maybe (Term a)
 lookupSubst i (Substitution subst) = do
@@ -298,7 +304,7 @@ instance Show Substitution where
     in "Substitution { " ++ intercalate ", " cs ++ " }"
 
 -- >>> :set -XTypeApplications
--- >>> ex_substitution_2
+-- >>> ex_substitution
 -- Substitution { Int -> fromList [(1,Con 1000)], Char -> fromList [(1,Con 'c')] }
 
 --------------------------------------------------------------------------------
@@ -315,9 +321,6 @@ instance Show Substitution where
 -- What is the simplest thing that I have to implement first? For copying, we
 -- should use the approach of composing subexpressions which is outlined in the
 -- account of fast unification.
-
-occursIn :: Int -> Term a -> Bool
-occursIn = undefined
 
 -- I'll outline here the principles in the fast unification treaty: the point is
 -- that if I have two substitutions theta and phi, that are seen as sets of
@@ -337,6 +340,16 @@ occursIn = undefined
 -- IntSet, but has to be a TypeRepMap IntSet
 
 newtype FreeVars = FreeVars (TM.TypeRepMap (Const IntSet :: Type -> Type))
+
+instance Semigroup FreeVars where
+  (FreeVars xs) <> (FreeVars ys) = FreeVars $ TM.unionWith setUnion xs ys
+    where
+      setUnion :: Const IntSet x -> Const IntSet x -> Const IntSet x
+      setUnion (Const s1) (Const s2) = Const $ IS.union s1 s2
+
+instance Monoid FreeVars where
+  mempty  = FreeVars TM.empty
+  mappend = (<>)
 
 instance Show FreeVars where
   show (FreeVars s) =
@@ -387,9 +400,17 @@ instance {-# overlappable #-}
 -- >>> ftv acceptable
 -- FreeVars { [Char] -> Const (fromList [1]), Foo -> Const (fromList [1]) }
 
+foldSubstitution :: forall m. Monoid m => (forall x. WellFormed x => Term x -> m) -> Substitution -> m
+foldSubstitution f (Substitution s) = mconcat . map collapseIM $ toList s
+  where
+    collapseIM :: TM.WrapTypeable (Constrained WellFormed (IM.IntMap :.: Term)) -> m
+    collapseIM (TM.WrapTypeable (Constrained (Comp ita))) = IM.foldr (\ta m -> f ta <> m) mempty ita
+
 instance Substitutable Substitution where
   s1 @@ s2 = unionSubst (mapSubst (s1 @@) s2) s1
-  ftv _ = undefined
+  ftv s    = foldSubstitution ftv s
+
+-- >>> ftv ex_substitution
 
 data UnificationError = IncompatibleUnification | OccursCheckFailed | UnificationError
   deriving (Show)
