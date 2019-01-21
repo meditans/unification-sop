@@ -290,9 +290,6 @@ mapSubst f (Substitution s) = Substitution $ TM.hoist help1 s
 lookupTM :: forall k (a :: k) f. Typeable a => TR.TypeRep a -> TM.TypeRepMap f -> Maybe (f a)
 lookupTM _ = TM.lookup
 
-ssss :: forall a. WellFormed a => (IM.IntMap :.: Term) a -> String
-ssss a = show . unComp $ a
-
 instance Show Substitution where
   show (Substitution s) =
     let
@@ -315,34 +312,6 @@ instance Show Substitution where
 --------------------------------------------------------------------------------
 -- Unification
 --------------------------------------------------------------------------------
--- This is a simple account of unification following the footsteps of Parson's
--- outline. Afterwards I'll do an implementation which is more performant
--- following the ideas of fast ST-like functional references. The patterns used
--- here should be intended only to offer a simple account of unification,
--- because copying follows the unification exponential cost because of term
--- subcopying.
-
-
--- What is the simplest thing that I have to implement first? For copying, we
--- should use the approach of composing subexpressions which is outlined in the
--- account of fast unification.
-
--- I'll outline here the principles in the fast unification treaty: the point is
--- that if I have two substitutions theta and phi, that are seen as sets of
--- linking from one element to another, then I have to do the union of the last
--- substitution that I want to apply, and mapping over the key of the first the
--- substitution of the second. Why is this? Let's see it through an example:
--- let's say I have:
---
--- theta = [ X -> (W, Z) ]
--- phi   = [ Y -> X, X -> Y, Z -> W]
-
--- Let's say that I want to apply first phi. So Y becomes X, then X becomes
--- (W,Z). Then every other binding stays the same if I pick it from theta,
--- because it is the last. Summing it up:
-
--- At this point, the structure that contains the free variables cannot be an
--- IntSet, but has to be a TypeRepMap IntSet
 
 newtype FreeVars = FreeVars (TM.TypeRepMap (Const IntSet :: Type -> Type))
 
@@ -376,6 +345,10 @@ memberFreeVars i (FreeVars tm) =
   case TM.lookup @a tm of
     Just (Const is) -> IS.member i is
     Nothing -> False
+
+--------------------------------------------------------------------------------
+-- Substitutable
+--------------------------------------------------------------------------------    
 
 class Substitutable a where
   (@@) :: Substitution -> a -> a
@@ -431,17 +404,17 @@ newtype Unification a
   { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
-runUnification :: (Unifiable2 (Term a)) => Term a -> Term a -> Either UnificationError (Term a)
+runUnification :: (Unifiable (Term a)) => Term a -> Term a -> Either UnificationError (Term a)
 runUnification a b = evalState (runExceptT (unUnification (unifyVal a b))) emptySubst
 
 --------------------------------------------------------------------------------
--- Unifiable2
+-- Unifiable
 --------------------------------------------------------------------------------
 
-class Unifiable2 a where
+class Unifiable a where
   unifyVal :: a   -> a -> Unification a
 
-instance {-# overlappable #-} Unifiable2 (Term Int) where
+instance {-# overlappable #-} Unifiable (Term Int) where
   unifyVal (Con a) (Con b) | a == b    = pure (Con a)
                            | otherwise = throwError IncompatibleUnification
   unifyVal (Var i) (Var j) | i == j    = pure (Var i)
@@ -449,7 +422,7 @@ instance {-# overlappable #-} Unifiable2 (Term Int) where
   unifyVal t       (Var i)             = bindv i t
   unifyVal _ _                         = error "Cannot construct values of this form"
 
-instance {-# overlappable #-} Unifiable2 (Term Char) where
+instance {-# overlappable #-} Unifiable (Term Char) where
   unifyVal (Con a) (Con b) | a == b    = pure (Con a)
                            | otherwise = throwError IncompatibleUnification
   unifyVal (Var i) (Var j) | i == j    = pure (Var i)
@@ -457,7 +430,7 @@ instance {-# overlappable #-} Unifiable2 (Term Char) where
   unifyVal t       (Var i)             = bindv i t
   unifyVal _ _                         = error "Cannot construct values of this form"
 
-instance {-# overlappable #-} Unifiable2 (Term String) where
+instance {-# overlappable #-} Unifiable (Term String) where
   unifyVal (Con a) (Con b) | a == b    = pure (Con a)
                            | otherwise = throwError IncompatibleUnification
   unifyVal (Var i) (Var j) | i == j    = pure (Var i)
@@ -469,8 +442,8 @@ instance {-# overlappable #-}
   forall a. (Typeable a, Show a, Eq a, Generic a, Substitutable (Term a), HasDatatypeInfo a
           , All2 (Compose Show Term) (Code a)
           , All2 (Compose Eq Term) (Code a)
-          , All2 (And (Compose Unifiable2 Term) (Compose Substitutable Term)) (Code a))
-  => Unifiable2 (Term a)
+          , All2 (And (Compose Unifiable Term) (Compose Substitutable Term)) (Code a))
+  => Unifiable (Term a)
   where
   unifyVal (Con a) (Con b) | a == b    = pure (Con a)
                            | otherwise = throwError IncompatibleUnification
@@ -485,7 +458,7 @@ instance {-# overlappable #-}
         pairs = hliftA2 unsafePair emt1 t2
       in do
         currSubst <- get
-        s <- hctraverse' (Proxy @(And (Compose Unifiable2 Term) (Compose Substitutable Term))) (\(Comp (Pair s1 s2)) -> do
+        s <- hctraverse' (Proxy @(And (Compose Unifiable Term) (Compose Substitutable Term))) (\(Comp (Pair s1 s2)) -> do
           let
             s1' = currSubst @@ s1
             s2' = currSubst @@ s2
