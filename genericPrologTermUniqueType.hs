@@ -409,8 +409,6 @@ class Unifiable a where
   unify    :: Term a -> Term a -> Unification Substitution
   unifyVar :: Int    -> Term a -> Unification Substitution
   occursCheck :: forall (k :: Type). TR.TypeRep k -> Int -> Term a -> Unification ()
-  -- | Replace i with a in b
-  replace       :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term a -> Term a
 
 instance {-# overlaps #-} Unifiable Char where
 instance {-# overlaps #-} Unifiable String where
@@ -432,9 +430,9 @@ instance {-# overlaps #-} Unifiable Int where
             Nothing -> undefined -- The same thing
           _     -> do
             occursCheck (TR.typeRep @Int) i t
-            let t' = replaceSubst theta t
-            modify (adjustSubstitution i t')
-            modify (insertSubst @Int i t')
+            -- let t' = replaceSubst theta t
+            -- modify (adjustSubstitution i t')
+            -- modify (insertSubst @Int i t')
             undefined
 
   occursCheck :: TR.TypeRep a -> Int -> Term Int -> Unification ()
@@ -447,14 +445,6 @@ instance {-# overlaps #-} Unifiable Int where
       Nothing -> undefined -- Here we should still check that it doesn't appear recursively in the referenced term
   occursCheck _ _ (Con _) = pure ()
   occursCheck _ _ (Rec _) = error "Cannot construct this value"
-
-  replace :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term Int -> Term Int
-  replace i a (Var j) =
-    case TR.eqTypeRep (TR.typeRep @Int) (TR.typeRep @k) of
-      Just HRefl -> if i == j then a else (Var j)
-      Nothing    -> Var j
-  replace _ _ (Con c) = Con c
-  replace _ _ (Rec _) = error "Cannot construct this value"
 
 instance {-# overlappable #-}
   ( Typeable a, Eq a, Generic a , All2 Unifiable (Code a))
@@ -488,36 +478,6 @@ instance {-# overlappable #-}
         gets (lookupSubst @a j) >>= mapM_ (occursCheck tr i)
   occursCheck _ _  (Con _) = pure ()
   occursCheck tr i (Rec r) = hctraverse_ (Proxy @Unifiable) (occursCheck tr i) r
-
-  replace :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term a -> Term a
-  replace i a (Var j) =
-    case TR.eqTypeRep (TR.typeRep @a) (TR.typeRep @k) of
-      Just HRefl -> if i == j then a else (Var j)
-      Nothing    -> Var j
-  replace _ _ (Con c) = Con c
-  replace i a (Rec t) = Rec $ hcmap (Proxy @Unifiable) (replace i a) t
-
---------------------------------------------------------------------------------
--- Functions based on Unifiable
---------------------------------------------------------------------------------
-
-replaceIntMap :: forall a (k :: Type). (Typeable k, Unifiable a) => IM.IntMap (Term k) -> Term a -> Term a
-replaceIntMap im a = IM.foldrWithKey replace a im
-
-replaceSubst  :: forall a. (Unifiable a) => Substitution -> Term a -> Term a
-replaceSubst (Substitution sub) t = foldl f t (TM.keys sub)
-  where
-    f :: Term a -> TR.SomeTypeRep -> Term a
-    f tacc (TR.SomeTypeRep ty) =
-      case (TR.eqTypeRep (TR.typeRepKind ty) (TR.typeRep @Type)) of
-        Nothing    -> error "Kinds other then Type are not supported"
-        Just HRefl ->
-          case TR.withTypeable ty $ lookupTM ty sub of
-            Nothing -> error "This case should be impossible, given that I'm searching by key"
-            Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap @a im tacc
-
-adjustSubstitution :: (Typeable a) => Int -> Term a -> Substitution -> Substitution
-adjustSubstitution i t = mapSubst (replace i t)
 
 --------------------------------------------------------------------------------
 -- Utilities
