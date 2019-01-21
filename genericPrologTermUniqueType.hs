@@ -374,7 +374,7 @@ instance {-# overlaps #-} Substitutable (Term Char) where
   ftv (Rec _)  = error "I can't construct that value"
 
 instance {-# overlappable #-}
-  (Typeable a, All2 (Compose Substitutable Term) (Code a), All SListI (Code a)) => Substitutable (Term a) where
+  (Typeable a, All2 (Compose Substitutable Term) (Code a), Generic a) => Substitutable (Term a) where
   s @@ (Var i) = maybe (Var i) id (lookupSubst i s)
   _ @@ (Con i) = Con i
   s @@ (Rec w) = Rec $ hcmap (Proxy @(Compose Substitutable Term)) (s @@) w
