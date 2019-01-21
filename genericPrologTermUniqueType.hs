@@ -1,4 +1,4 @@
--- -*- eval: (med/hp '(pretty-show first-class-families generics-sop typerep-map show-combinators)) -*-
+-- -*- dante-repl-command-line: ("nix-shell" "-p" "with import <nixpkgs> {}; pkgs.haskellPackages.ghcWithPackages (p: [(pkgs.haskell.lib.dontHaddock p.pretty-show) (pkgs.haskell.lib.dontHaddock p.first-class-families) (pkgs.haskell.lib.dontHaddock p.generics-sop) (pkgs.haskell.lib.dontHaddock (pkgs.haskell.lib.dontCheck (pkgs.haskellPackages.callPackage ~/code/haskell/forks/typerep-map {}))) (pkgs.haskell.lib.dontHaddock p.show-combinators)])" "--run" "ghci") -*-
 
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -16,6 +16,7 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 
 -- | In this version, we consider (1, Int) and (1, Char) different variables. In
 -- this way, we don't have to track which variable has which type. Indexes of
@@ -23,7 +24,7 @@
 
 module GenericPrologTermUniqueType where
 
-import Generics.SOP
+import Generics.SOP hiding (fromList)
 import qualified GHC.Generics as GHC
 import Data.Char (toLower)
 import Data.Typeable
@@ -38,7 +39,7 @@ import qualified Data.IntSet as IS
 import Data.Functor.Const
 import Control.Monad.State
 import Control.Monad.Except
-import GHC.Exts (toList)
+import GHC.Exts (fromList, toList)
 
 -- The usual generic-sop based infrastructure
 
@@ -77,10 +78,11 @@ fooI :: Term Int -> Term Foo
 fooI ti = Rec . SOP . Z $ ti :* Nil
 
 -- Let's write again the examples from before:
-ex3', ex4', ex5' :: Term Foo
+ex3', ex4', ex5', ex5'var :: Term Foo
 ex3' = fooI (Var 1)
 ex4' = fooS (Con "ciao") (Con $ FooI 2)
 ex5' = fooS (Con "ciao") (fooS (Var 1) (Con $ FooI 2))
+ex5'var = fooS (Var 2) (fooS (Con "hey") (Con $ FooI 2))
 
 -- What remains to be done here is not letting users directly write the ints,
 -- but instead offering a monadic framework in which they can express variables.
@@ -199,8 +201,8 @@ withConstrained f (Constrained fa) = f fa
 
 -- Questo non va bene perche' non puo' essere applicato parzialmente.
 -- type WellFormed a = (Show (Term a), Substitutable (Term a))
-class    (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a), Unifiable a) => WellFormed (a :: Type) where
-instance (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a), Unifiable a) => WellFormed a where
+class    (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a)) => WellFormed (a :: Type) where
+instance (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a)) => WellFormed a where
 
 newtype Substitution = Substitution (TM.TypeRepMap (Constrained WellFormed (IM.IntMap :.: Term)))
 
@@ -215,6 +217,9 @@ insertSubst i ta (Substitution subst) =
   case TM.member @a subst of
     True  -> Substitution $ TM.adjust @a (\(Constrained (Comp m)) -> Constrained $ Comp (IM.insert i ta m)) subst
     False -> Substitution $ TM.insert @a (Constrained . Comp $ IM.singleton i ta) subst
+
+singletonSubst :: forall a. (WellFormed a, Typeable a) => Int -> Term a -> Substitution
+singletonSubst i t = insertSubst i t emptySubst
 
 ex_substitution :: Substitution
 ex_substitution = insertSubst @Char 1 (Con 'c') $ insertSubst @Int 1 (Con 1000) emptySubst
@@ -366,6 +371,12 @@ instance Show FreeVars where
                   Just tm -> show a ++ " -> " ++ show tm
     in "FreeVars { " ++ intercalate ", " cs ++ " }"
 
+memberFreeVars :: forall (a :: Type). (Typeable a) => Int -> FreeVars -> Bool
+memberFreeVars i (FreeVars tm) =
+  case TM.lookup @a tm of
+    Just (Const is) -> IS.member i is
+    Nothing -> False
+
 class Substitutable a where
   (@@) :: Substitution -> a -> a
   ftv  :: a -> FreeVars
@@ -420,85 +431,83 @@ newtype Unification a
   { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
+runUnification :: (Unifiable2 (Term a)) => Term a -> Term a -> Either UnificationError (Term a)
+runUnification a b = evalState (runExceptT (unUnification (unifyVal a b))) emptySubst
+
 --------------------------------------------------------------------------------
--- Unifiable
+-- Unifiable2
 --------------------------------------------------------------------------------
 
--- This class is clearly bloated, we should separate the recursion in the typeclass
--- and implement the methods as stand alone ones.
-class Unifiable a where
-  unify    :: Term a -> Term a -> Unification Substitution
-  unifyVar :: Int    -> Term a -> Unification Substitution
-  occursCheck :: forall (k :: Type). TR.TypeRep k -> Int -> Term a -> Unification ()
+class Unifiable2 a where
+  unifyVal :: a   -> a -> Unification a
 
-instance {-# overlaps #-} Unifiable Char where
-instance {-# overlaps #-} Unifiable String where
-instance {-# overlaps #-} Unifiable Int where
-  unify (Con i) (Con j)
-    | i == j = get
-    | otherwise = throwError IncompatibleUnification
-  unify (Var i) t = unifyVar i t
-  unify t (Var i) = unifyVar i t
-  unify _ _       = error "I can't construct that value"
-  unifyVar i t = do
-    theta <- get
-    case lookupSubst @Int i theta of
-      Just t1 -> unify t1 t
-      Nothing -> do
-        case t of
-          Var j -> case lookupSubst @Int j theta of
-            Just t2 -> unifyVar i t2
-            Nothing -> undefined -- The same thing
-          _     -> do
-            occursCheck (TR.typeRep @Int) i t
-            -- let t' = replaceSubst theta t
-            -- modify (adjustSubstitution i t')
-            -- modify (insertSubst @Int i t')
-            undefined
+instance {-# overlappable #-} Unifiable2 (Term Int) where
+  unifyVal (Con a) (Con b) | a == b    = pure (Con a)
+                           | otherwise = throwError IncompatibleUnification
+  unifyVal (Var i) (Var j) | i == j    = pure (Var i)
+  unifyVal (Var i) t                   = bindv i t
+  unifyVal t       (Var i)             = bindv i t
+  unifyVal _ _                         = error "Cannot construct values of this form"
 
-  occursCheck :: TR.TypeRep a -> Int -> Term Int -> Unification ()
-  occursCheck tr i (Var j) =
-    case TR.eqTypeRep tr (TR.typeRep @Int) of
-      Just _  ->
-        if i == j
-        then throwError OccursCheckFailed
-        else undefined -- Here we check that it doesn't appear in the referenced term
-      Nothing -> undefined -- Here we should still check that it doesn't appear recursively in the referenced term
-  occursCheck _ _ (Con _) = pure ()
-  occursCheck _ _ (Rec _) = error "Cannot construct this value"
+instance {-# overlappable #-} Unifiable2 (Term Char) where
+  unifyVal (Con a) (Con b) | a == b    = pure (Con a)
+                           | otherwise = throwError IncompatibleUnification
+  unifyVal (Var i) (Var j) | i == j    = pure (Var i)
+  unifyVal (Var i) t                   = bindv i t
+  unifyVal t       (Var i)             = bindv i t
+  unifyVal _ _                         = error "Cannot construct values of this form"
+
+instance {-# overlappable #-} Unifiable2 (Term String) where
+  unifyVal (Con a) (Con b) | a == b    = pure (Con a)
+                           | otherwise = throwError IncompatibleUnification
+  unifyVal (Var i) (Var j) | i == j    = pure (Var i)
+  unifyVal (Var i) t                   = bindv i t
+  unifyVal t       (Var i)             = bindv i t
+  unifyVal _ _                         = error "Cannot construct values of this form"
 
 instance {-# overlappable #-}
-  ( Typeable a, Eq a, Generic a , All2 Unifiable (Code a))
-  => Unifiable a where
-  unify (Con i) (Con j)
-    | i == j = get
-    | otherwise = throwError IncompatibleUnification
-  unify (Var i) t = unifyVar i t
-  unify t (Var i) = unifyVar i t
-  unify (Rec t1) (Rec t2)
+  forall a. (Typeable a, Show a, Eq a, Generic a, Substitutable (Term a), HasDatatypeInfo a
+          , All2 (Compose Show Term) (Code a)
+          , All2 (Compose Eq Term) (Code a)
+          , All2 (And (Compose Unifiable2 Term) (Compose Substitutable Term)) (Code a))
+  => Unifiable2 (Term a)
+  where
+  unifyVal (Con a) (Con b) | a == b    = pure (Con a)
+                           | otherwise = throwError IncompatibleUnification
+  unifyVal (Var i) (Var j) | i == j    = pure (Var i)
+  unifyVal (Var i) t                   = bindv i t
+  unifyVal t       (Var i)             = bindv i t
+  unifyVal (Rec t1) (Rec t2)
     | sameConstructor t1 t2 =
       let
         mt1   = hliftA  (Comp . Just) t1
         emt1  = hexpand (Comp Nothing) mt1
         pairs = hliftA2 unsafePair emt1 t2
       in do
-        hctraverse_ (Proxy @Unifiable) (\(Comp (Pair s1 s2)) -> void $ unify s1 s2) pairs
-        get
+        currSubst <- get
+        s <- hctraverse' (Proxy @(And (Compose Unifiable2 Term) (Compose Substitutable Term))) (\(Comp (Pair s1 s2)) -> do
+          let
+            s1' = currSubst @@ s1
+            s2' = currSubst @@ s2
+          unifyVal s1' s2')
+          pairs
+        currSubst <- get
+        pure $ currSubst @@ Rec s
     | otherwise     = throwError IncompatibleUnification
-  unify _ _ = undefined
-  unifyVar = undefined
+  unifyVal _ _ = throwError IncompatibleUnification
+    
+bindv
+  :: forall a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable (Term a))
+  => Int -> Term a -> Unification (Term a)
+bindv i t
+ | memberFreeVars @a i (ftv t) = throwError OccursCheckFailed
+ | otherwise  = do
+     curr <- get
+     put (singletonSubst i t @@ curr)
+     pure t
 
-  occursCheck tr i (Var j) =
-    case TR.eqTypeRep tr (TR.typeRep @a) of
-      Just _  ->
-        if i == j
-        then throwError OccursCheckFailed
-        else do -- Here we check that it doesn't appear in the referenced term
-          gets (lookupSubst @a j) >>= mapM_ (occursCheck tr i)
-      Nothing -> do -- Here we should still check that it doesn't appear recursively in the referenced term
-        gets (lookupSubst @a j) >>= mapM_ (occursCheck tr i)
-  occursCheck _ _  (Con _) = pure ()
-  occursCheck tr i (Rec r) = hctraverse_ (Proxy @Unifiable) (occursCheck tr i) r
+-- >>> runUnification ex5' ex5'var
+-- Right (fooS (Con "ciao") (fooS (Con "hey") (Con (FooI 2))))
 
 --------------------------------------------------------------------------------
 -- Utilities
