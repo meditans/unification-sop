@@ -400,32 +400,7 @@ newtype Unification a
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
 --------------------------------------------------------------------------------
--- Attempts at finding a type for the unify stuff
---------------------------------------------------------------------------------
-
--- class WellFormedR a where
-
--- instance {-# overlaps #-} WellFormedR Int where
-
--- instance {-# overlappable #-}
---   ( WellFormed a, Generic a, HasDatatypeInfo a
---   , All2 WellFormedR (Code a))
---   => WellFormedR a where
-
--- class (WellFormed a, All2 WellFormedS (Code a)) => WellFormedS a where
--- instance WellFormedS Int where
-
--- This is not possible as All2 is a synonym
--- instance {-# overlaps #-} All2 Eq (Code Int) where
-
--- class Complex a where
--- instance Complex a => All2 WellFormedT (Code a)
--- class (WellFormed a, Complex a => All2 WellFormedT (Code a)) => WellFormedT a where
--- instance WellFormedT Int where
-
---------------------------------------------------------------------------------
--- Attempt which is similar to the previous Substitutable mechanism (with
--- overloaded classes)
+-- Unifiable
 --------------------------------------------------------------------------------
 
 -- This class is clearly bloated, we should separate the recursion in the typeclass
@@ -502,7 +477,6 @@ instance {-# overlappable #-}
   unify _ _ = undefined
   unifyVar = undefined
 
--- lookupSubst :: forall a. (Typeable a) => Int -> Substitution -> Maybe (Term a)
   occursCheck tr i (Var j) =
     case TR.eqTypeRep tr (TR.typeRep @a) of
       Just _  ->
@@ -523,6 +497,10 @@ instance {-# overlappable #-}
   replace _ _ (Con c) = Con c
   replace i a (Rec t) = Rec $ hcmap (Proxy @Unifiable) (replace i a) t
 
+--------------------------------------------------------------------------------
+-- Functions based on Unifiable
+--------------------------------------------------------------------------------
+
 replaceIntMap :: forall a (k :: Type). (Typeable k, Unifiable a) => IM.IntMap (Term k) -> Term a -> Term a
 replaceIntMap im a = IM.foldrWithKey replace a im
 
@@ -541,25 +519,10 @@ replaceSubst (Substitution sub) t = foldl f t (TM.keys sub)
 adjustSubstitution :: (Typeable a) => Int -> Term a -> Substitution -> Substitution
 adjustSubstitution i t = mapSubst (replace i t)
 
--- We need the equivalent of Data.Map.foldrWithKey for our substitutions, so
--- that we can write the correct term.
-
--- Iniziamo dalla base: data una IntMap (Term a) riesco ad applicare tutto ad un
-
-
 --------------------------------------------------------------------------------
--- Unify function
+-- Utilities
 --------------------------------------------------------------------------------
 
--- unifyVar :: Int -> Term a -> Unification Substitution
--- unifyVar = undefined
-
---   | i `occursIn` t = Nothing
---   | otherwise      = Just $ insertSubst @a i t emptySubst
--- unify t (Var i)
---   | i `occursIn` t = Nothing
---   | otherwise      = Just $ insertSubst @a i t emptySubst
---   
 data Pair a = Pair a a
 
 unsafePair :: forall a. (:.:) Maybe Term a -> Term a -> (Pair :.: Term) a
