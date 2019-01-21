@@ -437,7 +437,6 @@ class Unifiable a where
   -- | Replace i with a in b
   replace       :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term a -> Term a
   replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term a -> Term a
-  replaceSubst  :: Substitution -> Term a -> Term a
 
 instance {-# overlaps #-} Unifiable Char where
 instance {-# overlaps #-} Unifiable String where
@@ -486,19 +485,6 @@ instance {-# overlaps #-} Unifiable Int where
   replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term Int -> Term Int
   replaceIntMap im a = IM.foldrWithKey replace a im
 
-  replaceSubst  :: Substitution -> Term Int -> Term Int
-  replaceSubst (Substitution sub) t = foldl f t (TM.keys sub)
-    where
-      f :: Term Int -> TR.SomeTypeRep -> Term Int
-      f tacc (TR.SomeTypeRep ty) =
-        case (TR.eqTypeRep (TR.typeRepKind ty) (TR.typeRep @Type)) of
-          Nothing    -> error "Kinds other then Type are not supported"
-          Just HRefl ->
-            case TR.withTypeable ty $ lookupTM ty sub of
-              Nothing -> error "This case should be impossible, given that I'm searching by key"
-              Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap im tacc
-
-
 instance {-# overlappable #-}
   ( Typeable a, Eq a, Generic a , All2 Unifiable (Code a))
   => Unifiable a where
@@ -544,17 +530,17 @@ instance {-# overlappable #-}
   replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term a -> Term a
   replaceIntMap im a = IM.foldrWithKey replace a im
 
-  replaceSubst  :: Substitution -> Term a -> Term a
-  replaceSubst (Substitution sub) t = foldl f t (TM.keys sub)
-    where
-      f :: Term a -> TR.SomeTypeRep -> Term a
-      f tacc (TR.SomeTypeRep ty) =
-        case (TR.eqTypeRep (TR.typeRepKind ty) (TR.typeRep @Type)) of
-          Nothing    -> error "Kinds other then Type are not supported"
-          Just HRefl ->
-            case TR.withTypeable ty $ lookupTM ty sub of
-              Nothing -> error "This case should be impossible, given that I'm searching by key"
-              Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap im tacc
+replaceSubst  :: forall a. (Unifiable a) => Substitution -> Term a -> Term a
+replaceSubst (Substitution sub) t = foldl f t (TM.keys sub)
+  where
+    f :: Term a -> TR.SomeTypeRep -> Term a
+    f tacc (TR.SomeTypeRep ty) =
+      case (TR.eqTypeRep (TR.typeRepKind ty) (TR.typeRep @Type)) of
+        Nothing    -> error "Kinds other then Type are not supported"
+        Just HRefl ->
+          case TR.withTypeable ty $ lookupTM ty sub of
+            Nothing -> error "This case should be impossible, given that I'm searching by key"
+            Just (Constrained (Comp im)) -> TR.withTypeable ty $ replaceIntMap @a im tacc
 
 adjustSubstitution :: (Typeable a) => Int -> Term a -> Substitution -> Substitution
 adjustSubstitution i t = mapSubst (replace i t)
