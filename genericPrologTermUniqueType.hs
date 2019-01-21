@@ -436,7 +436,6 @@ class Unifiable a where
   occursCheck :: forall (k :: Type). TR.TypeRep k -> Int -> Term a -> Unification ()
   -- | Replace i with a in b
   replace       :: forall (k :: Type). (Typeable k) => Int -> Term k -> Term a -> Term a
-  replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term a -> Term a
 
 instance {-# overlaps #-} Unifiable Char where
 instance {-# overlaps #-} Unifiable String where
@@ -482,9 +481,6 @@ instance {-# overlaps #-} Unifiable Int where
   replace _ _ (Con c) = Con c
   replace _ _ (Rec _) = error "Cannot construct this value"
 
-  replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term Int -> Term Int
-  replaceIntMap im a = IM.foldrWithKey replace a im
-
 instance {-# overlappable #-}
   ( Typeable a, Eq a, Generic a , All2 Unifiable (Code a))
   => Unifiable a where
@@ -527,8 +523,8 @@ instance {-# overlappable #-}
   replace _ _ (Con c) = Con c
   replace i a (Rec t) = Rec $ hcmap (Proxy @Unifiable) (replace i a) t
 
-  replaceIntMap :: forall (k :: Type). (Typeable k) => IM.IntMap (Term k) -> Term a -> Term a
-  replaceIntMap im a = IM.foldrWithKey replace a im
+replaceIntMap :: forall a (k :: Type). (Typeable k, Unifiable a) => IM.IntMap (Term k) -> Term a -> Term a
+replaceIntMap im a = IM.foldrWithKey replace a im
 
 replaceSubst  :: forall a. (Unifiable a) => Substitution -> Term a -> Term a
 replaceSubst (Substitution sub) t = foldl f t (TM.keys sub)
