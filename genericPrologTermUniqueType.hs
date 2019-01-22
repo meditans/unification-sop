@@ -326,19 +326,11 @@ instance Monoid FreeVars where
   mappend = (<>)
 
 instance Show FreeVars where
-  show (FreeVars s) =
-    let
-      ks = TM.keys s
-      cs = flip map ks $ \tr ->
-        case tr of
-          TR.SomeTypeRep a ->
-            case (TR.eqTypeRep (TR.typeRepKind a) (TR.typeRep @Type)) of
-              Nothing    -> error "Kinds other then Type are not supported"
-              Just HRefl ->
-                case TR.withTypeable a $ lookupTM a s of
-                  Nothing -> error "This case should be impossible, given that I'm searching by key"
-                  Just tm -> show a ++ " -> " ++ show tm
-    in "FreeVars { " ++ intercalate ", " cs ++ " }"
+  show (FreeVars s) = wrap . intercalate ", " . map showInner $ toList s
+    where
+      showInner (TM.WrapTypeable a@(Const is)) =
+        show (typeRep a) ++ " -> " ++ show (toList is)
+      wrap a = "FreeVars { "  ++ a ++ " }"
 
 memberFreeVars :: forall (a :: Type). (Typeable a) => Int -> FreeVars -> Bool
 memberFreeVars i (FreeVars tm) =
@@ -382,7 +374,7 @@ instance {-# overlappable #-}
     in foldl (\(FreeVars t1) (FreeVars t2) -> FreeVars $ TM.unionWith (\(Const s1) (Const s2) -> Const (IS.union s1 s2)) t1 t2) (FreeVars TM.empty) a
 
 -- >>> ftv acceptable
--- FreeVars { [Char] -> Const (fromList [1]), Foo -> Const (fromList [1]) }
+-- FreeVars { [Char] -> [1], Foo -> [1] }
 
 foldSubstitution :: forall m. Monoid m => (forall x. WellFormed x => Term x -> m) -> Substitution -> m
 foldSubstitution f (Substitution s) = mconcat . map collapseIM $ toList s
