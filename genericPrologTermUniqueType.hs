@@ -78,11 +78,12 @@ fooI :: Term Int -> Term Foo
 fooI ti = Rec . SOP . Z $ ti :* Nil
 
 -- Let's write again the examples from before:
-ex3', ex4', ex5', ex5'var :: Term Foo
+ex3', ex4', ex5', ex5'var, ex5'var2 :: Term Foo
 ex3' = fooI (Var 1)
 ex4' = fooS (Con "ciao") (Con $ FooI 2)
 ex5' = fooS (Con "ciao") (fooS (Var 1) (Con $ FooI 2))
 ex5'var = fooS (Var 2) (fooS (Con "hey") (Con $ FooI 2))
+ex5'var2 = fooS (Var 1) (fooS (Con "hey") (Con $ FooI 2))
 
 -- What remains to be done here is not letting users directly write the ints,
 -- but instead offering a monadic framework in which they can express variables.
@@ -464,8 +465,12 @@ bindv i t
      put (singletonSubst i t @@ curr)
      pure t
 
+-- >>> runUnification ex5' ex5'
+-- Right (fooS (Con "ciao") (fooS (Var 1) (Con (FooI 2))))
 -- >>> runUnification ex5' ex5'var
 -- Right (fooS (Con "ciao") (fooS (Con "hey") (Con (FooI 2))))
+-- >>> runUnification ex5' ex5'var2
+-- Left IncompatibleUnification
 
 --------------------------------------------------------------------------------
 -- Utilities
