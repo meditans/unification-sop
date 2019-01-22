@@ -291,23 +291,16 @@ lookupTM :: forall k (a :: k) f. Typeable a => TR.TypeRep a -> TM.TypeRepMap f -
 lookupTM _ = TM.lookup
 
 instance Show Substitution where
-  show (Substitution s) =
-    let
-      ks = TM.keys s
-      cs = flip map ks $ \tr ->
-        case tr of
-          TR.SomeTypeRep a ->
-            case (TR.eqTypeRep (TR.typeRepKind a) (TR.typeRep @Type)) of
-              Nothing    -> error "Kinds other then Type are not supported"
-              Just HRefl ->
-                case TR.withTypeable a $ lookupTM a s of
-                  Nothing -> error "This case should be impossible, given that I'm searching by key"
-                  Just tm -> show a ++ " -> " ++ withConstrained @WellFormed (show . unComp) tm
-    in "Substitution { " ++ intercalate ", " cs ++ " }"
+  show (Substitution s) = wrap . intercalate ", " . map showInner $ toList s
+    where
+      showInner :: TM.WrapTypeable (Constrained WellFormed (IM.IntMap :.: Term)) -> String
+      showInner (TM.WrapTypeable a@(Constrained (Comp im))) =
+        show (typeRep a) ++ " -> " ++ show (toList im)
+      wrap a = "Substitution { "  ++ a ++ " }"
 
 -- >>> :set -XTypeApplications
 -- >>> ex_substitution
--- Substitution { Int -> fromList [(1,Con 1000)], Char -> fromList [(1,Con 'c')] }
+-- Substitution { Int -> [(1,Con 1000)], Char -> [(1,Con 'c')] }
 
 --------------------------------------------------------------------------------
 -- Unification
