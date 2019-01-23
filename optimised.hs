@@ -395,8 +395,8 @@ newtype Unification a
   { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
-runUnification :: (Unifiable (Term a)) => Term a -> Term a -> Either UnificationError (Term a)
-runUnification a b = evalState (runExceptT (unUnification (unifyVal a b))) emptySubst
+runUnification :: Unification a -> Either UnificationError a
+runUnification a = evalState (runExceptT (unUnification a)) emptySubst
 
 --------------------------------------------------------------------------------
 -- Unifiable
@@ -483,11 +483,11 @@ bindv st i t = do
   put (singletonSubst i t @@ st)
   pure t
 
--- >>> runUnification ex5' ex5'
+-- >>> runUnification $ unifyVal ex5' ex5'
 -- Right (fooS (Con "ciao") (fooS (Var 1) (Con (FooI 2))))
--- >>> runUnification ex5' ex5'var
+-- >>> runUnification $ unifyVal ex5' ex5'var
 -- Right (fooS (Con "ciao") (fooS (Con "hey") (Con (FooI 2))))
--- >>> runUnification ex5' ex5'var2
+-- >>> runUnification $ unifyVal ex5' ex5'var2
 -- Left IncompatibleUnification
 
 -- Let's do an example with lists
@@ -503,7 +503,7 @@ ex_list1_1, ex_list1_2 :: Term [Int]
 ex_list1_1 = cons (Var 1) (cons (Var 2) nil)
 ex_list1_2 = cons (Var 2) (cons (Var 1) nil)
 
--- >>> runUnification ex_list1_1 ex_list1_2
+-- >>> runUnification $ unifyVal ex_list1_1 ex_list1_2
 -- Right (: (Var 1) (: (Var 1) (Con [])))
 
 
