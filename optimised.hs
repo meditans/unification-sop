@@ -450,9 +450,9 @@ instance {-# overlappable #-}
   => Unifiable (Term a)
   where
     unifyVal ta tb = do { st <- get; uni st ta tb }
-    uni _ v@(Con a) (Con b) | a == b      = pure v
+    uni _ v@(Con a) (Con b)  | a == b     = pure v
                              | otherwise  = throwError IncompatibleUnification
-    uni _ v@(Var i) (Var j) | i == j      = pure v
+    uni _ v@(Var i) (Var j)  | i == j     = pure v
     uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
       where
         mbv = lookupSubst @a i st
@@ -489,6 +489,23 @@ bindv st i t = do
 -- Right (fooS (Con "ciao") (fooS (Con "hey") (Con (FooI 2))))
 -- >>> runUnification ex5' ex5'var2
 -- Left IncompatibleUnification
+
+-- Let's do an example with lists
+
+-- I need the smart constructors
+nil :: Term [a]
+nil = Con []
+
+cons :: Term a -> Term [a] -> Term [a]
+cons t ts = Rec . SOP . S . Z $ t :* ts :* Nil
+
+ex_list1_1, ex_list1_2 :: Term [Int]
+ex_list1_1 = cons (Var 1) (cons (Var 2) nil)
+ex_list1_2 = cons (Var 2) (cons (Var 1) nil)
+
+-- >>> runUnification ex_list1_1 ex_list1_2
+-- Right (: (Var 1) (: (Var 1) (Con [])))
+
 
 --------------------------------------------------------------------------------
 -- Utilities
