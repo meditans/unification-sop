@@ -516,6 +516,18 @@ ex_list1_3 = cons (Con 100) (cons (Var 3) nil)
 -- >>> ex_list1_1 `unify` ex_list1_2 >>= (`unify` ex_list1_3)
 -- Right (: (Con 100) (: (Con 100) (Con [])))
 
+-- Let's see an example with an infinite solution, the prolog [a, X] = X
+
+ex_list2_1, ex_list2_2 :: Term [Int]
+ex_list2_1 = cons (Con 1) (Var 1)
+ex_list2_2 = Var 1
+
+-- >>> runUnification (unifyVal ex_list2_1 ex_list2_2)
+-- (Right (: (Con 1) (Var 1)),Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
+
+-- >>> runUnification (unifyVal ex_list2_2 ex_list2_1)
+-- (Right (: (Con 1) (Var 1)),Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
+
 --------------------------------------------------------------------------------
 -- Utilities
 --------------------------------------------------------------------------------
