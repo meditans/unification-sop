@@ -97,26 +97,33 @@ ex5'var2 = fooS (Var 1) (fooS (Con "hey") (Con $ FooI 2))
 -- Show instances
 --------------------------------------------------------------------------------
 
+errorRecOnSimpleTypes :: a
+errorRecOnSimpleTypes = error "You can't have a Rec constructor on primitive types"
+
+--------------------------------------------------------------------------------
+-- Show instances
+--------------------------------------------------------------------------------
+
 instance {-# overlaps #-} Show (Term Int) where
   showsPrec = flip precShows
     where
       precShows (Var i) = showCon "Var" @| i
       precShows (Con i) = showCon "Con" @| i
-      precShows (Rec _) = error "I can't construct that value"
+      precShows (Rec _) = errorRecOnSimpleTypes
 
 instance {-# overlaps #-} Show (Term Char) where
   showsPrec = flip precShows
     where
       precShows (Var i) = showCon "Var" @| i
       precShows (Con c) = showCon "Con" @| c
-      precShows (Rec _) = error "I can't construct that value"
+      precShows (Rec _) = errorRecOnSimpleTypes
 
 instance {-# overlaps #-} Show (Term String) where
   showsPrec = flip precShows
     where
       precShows (Var i) = showCon "Var" @| i
       precShows (Con s) = showCon "Con" @| s
-      precShows (Rec _) = error "I can't construct that value"
+      precShows (Rec _) = errorRecOnSimpleTypes
 
 instance {-# overlappable #-}
          ( Show a, Generic a, HasDatatypeInfo a
@@ -348,18 +355,18 @@ class Substitutable a where
 instance {-# overlaps #-} Substitutable (Term Int) where
   s @@ (Var i) = maybe (Var i) id (lookupSubst i s)
   _ @@ (Con i) = Con i
-  _ @@ (Rec _) = error "I can't construct that value"
+  _ @@ (Rec _) = errorRecOnSimpleTypes
   ftv (Var i)  = FreeVars $ TM.one @Int (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
-  ftv (Rec _)  = error "I can't construct that value"
+  ftv (Rec _)  = errorRecOnSimpleTypes
 
 instance {-# overlaps #-} Substitutable (Term Char) where
   s @@ (Var i) = maybe (Var i) id (lookupSubst i s)
   _ @@ (Con c) = Con c
-  _ @@ (Rec _) = error "I can't construct that value"
+  _ @@ (Rec _) = errorRecOnSimpleTypes
   ftv (Var i)  = FreeVars $ TM.one @Int (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
-  ftv (Rec _)  = error "I can't construct that value"
+  ftv (Rec _)  = errorRecOnSimpleTypes
 
 instance {-# overlappable #-}
   (Typeable a, All2 (Compose Substitutable Term) (Code a), Generic a) => Substitutable (Term a) where
@@ -422,7 +429,7 @@ instance {-# overlappable #-} Unifiable (Term Int) where
       mbv = lookupSubst @Int i st
   uni st (Var i) t         | otherwise  = bindv st i t
   uni st t       v@(Var _)              = uni st v t
-  uni _ _ _                             = error "Cannot construct values of this form"
+  uni _ _ _                             = errorRecOnSimpleTypes
 
 instance {-# overlappable #-} Unifiable (Term Char) where
   unifyVal ta tb = do { st <- get; uni st ta tb }
@@ -434,7 +441,7 @@ instance {-# overlappable #-} Unifiable (Term Char) where
       mbv = lookupSubst @Char i st
   uni st (Var i) t         | otherwise  = bindv st i t
   uni st t       v@(Var _)              = uni st v t
-  uni _ _ _                             = error "Cannot construct values of this form"
+  uni _ _ _                             = errorRecOnSimpleTypes
 
 instance {-# overlappable #-} Unifiable (Term String) where
   unifyVal ta tb = do { st <- get; uni st ta tb }
@@ -446,7 +453,7 @@ instance {-# overlappable #-} Unifiable (Term String) where
       mbv = lookupSubst @String i st
   uni st (Var i) t         | otherwise  = bindv st i t
   uni st t       v@(Var _)              = uni st v t
-  uni _ _ _                             = error "Cannot construct values of this form"
+  uni _ _ _                             = errorRecOnSimpleTypes
 
 instance {-# overlappable #-}
   forall a. (Typeable a, Show a, Eq a, Generic a, Substitutable (Term a), HasDatatypeInfo a
