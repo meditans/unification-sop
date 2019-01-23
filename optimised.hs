@@ -395,8 +395,14 @@ newtype Unification a
   { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
-runUnification :: Unification a -> Either UnificationError a
-runUnification a = evalState (runExceptT (unUnification a)) emptySubst
+evalUnification :: Unification a -> Either UnificationError a
+evalUnification a = evalState (runExceptT (unUnification a)) emptySubst
+
+runUnification :: Unification a -> (Either UnificationError a, Substitution)
+runUnification a = runState (runExceptT (unUnification a)) emptySubst
+
+unify :: Unifiable a => a -> a -> Either UnificationError a
+unify a b = evalUnification (unifyVal a b)
 
 --------------------------------------------------------------------------------
 -- Unifiable
@@ -483,11 +489,11 @@ bindv st i t = do
   put (singletonSubst i t @@ st)
   pure t
 
--- >>> runUnification $ unifyVal ex5' ex5'
+-- >>> unify ex5' ex5'
 -- Right (fooS (Con "ciao") (fooS (Var 1) (Con (FooI 2))))
--- >>> runUnification $ unifyVal ex5' ex5'var
+-- >>> evalUnification $ unifyVal ex5' ex5'var
 -- Right (fooS (Con "ciao") (fooS (Con "hey") (Con (FooI 2))))
--- >>> runUnification $ unifyVal ex5' ex5'var2
+-- >>> evalUnification $ unifyVal ex5' ex5'var2
 -- Left IncompatibleUnification
 
 -- Let's do an example with lists
@@ -499,13 +505,16 @@ nil = Con []
 cons :: Term a -> Term [a] -> Term [a]
 cons t ts = Rec . SOP . S . Z $ t :* ts :* Nil
 
-ex_list1_1, ex_list1_2 :: Term [Int]
-ex_list1_1 = cons (Var 1) (cons (Var 2) nil)
-ex_list1_2 = cons (Var 2) (cons (Var 1) nil)
+ex_list1_1, ex_list1_2, ex_list1_3 :: Term [Int]
+ex_list1_1 = cons (Var 1)   (cons (Var 2) nil)
+ex_list1_2 = cons (Var 2)   (cons (Var 1) nil)
+ex_list1_3 = cons (Con 100) (cons (Var 3) nil)
 
 -- >>> runUnification $ unifyVal ex_list1_1 ex_list1_2
--- Right (: (Var 1) (: (Var 1) (Con [])))
+-- (Right (: (Var 1) (: (Var 1) (Con []))),Substitution { Int -> [(1,Var 2),(2,Var 1)] })
 
+-- >>> ex_list1_1 `unify` ex_list1_2 >>= (`unify` ex_list1_3)
+-- Right (: (Con 100) (: (Con 100) (Con [])))
 
 --------------------------------------------------------------------------------
 -- Utilities
