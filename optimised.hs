@@ -18,6 +18,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE DerivingVia #-}
 
 
 {-# options_ghc -fno-warn-unused-imports #-}
@@ -34,7 +35,7 @@ import Data.Char (toLower)
 import Data.Typeable
 import qualified Data.TypeRepMap as TM
 import qualified Data.IntMap     as IM
-import GHC.Base (Type)
+import GHC.Base (Type, coerce)
 import qualified Type.Reflection as TR
 import Data.List (intercalate)
 import Data.Maybe (isJust, fromJust)
@@ -344,6 +345,29 @@ memberFreeVars i (FreeVars tm) =
     Just (Const is) -> IS.member i is
     Nothing -> False
 
+-- And a synonym for visited sets
+
+newtype Visited = Visited (TM.TypeRepMap (Const IntSet :: Type -> Type))
+  deriving (Semigroup, Monoid) via FreeVars
+
+instance Show Visited where
+  show (Visited s) = wrap . intercalate ", " . map showInner $ toList s
+    where
+      showInner (TM.WrapTypeable a@(Const is)) =
+        show (typeRep a) ++ " -> " ++ show (toList is)
+      wrap a = "Visited { "  ++ a ++ " }"
+
+-- Searching in a visited set is the same as searching in the free variables
+memberVisited :: forall (a :: Type). (Typeable a) => Int -> Visited -> Bool
+memberVisited = coerce (memberFreeVars @a)
+
+insertVisited :: forall (a :: Type). (Typeable a) => Int -> Visited -> Visited
+insertVisited i (Visited tm) =
+  Visited $ TM.unionWith
+              (\(Const is1) (Const is2) -> Const (IS.union is1 is2))
+              (TM.one @a . Const $ IS.singleton i)
+              tm
+
 --------------------------------------------------------------------------------
 -- Substitutable
 --------------------------------------------------------------------------------    
@@ -351,6 +375,7 @@ memberFreeVars i (FreeVars tm) =
 class Substitutable a where
   (@@) :: Substitution -> a -> a
   ftv  :: a -> FreeVars
+  sbs  :: Visited -> Substitution -> a -> a
 
 instance {-# overlaps #-} Substitutable (Term Int) where
   s @@ (Var i) = maybe (Var i) id (lookupSubst i s)
@@ -359,6 +384,7 @@ instance {-# overlaps #-} Substitutable (Term Int) where
   ftv (Var i)  = FreeVars $ TM.one @Int (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
   ftv (Rec _)  = errorRecOnSimpleTypes
+  sbs = undefined
 
 instance {-# overlaps #-} Substitutable (Term Char) where
   s @@ (Var i) = maybe (Var i) id (lookupSubst i s)
@@ -367,6 +393,7 @@ instance {-# overlaps #-} Substitutable (Term Char) where
   ftv (Var i)  = FreeVars $ TM.one @Int (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
   ftv (Rec _)  = errorRecOnSimpleTypes
+  sbs = undefined
 
 instance {-# overlappable #-}
   (Typeable a, All2 (Compose Substitutable Term) (Code a), Generic a) => Substitutable (Term a) where
@@ -378,6 +405,14 @@ instance {-# overlappable #-}
   ftv (Rec w)  =
     let a :: [FreeVars] = hcollapse $ hcmap (Proxy @(Compose Substitutable Term)) (K . ftv) w
     in foldl (\(FreeVars t1) (FreeVars t2) -> FreeVars $ TM.unionWith (\(Const s1) (Const s2) -> Const (IS.union s1 s2)) t1 t2) (FreeVars TM.empty) a
+  sbs _       _ v@(Con _) = v
+  sbs visited s v@(Var i) =
+    case lookupSubst @a i s of
+      Just v'
+        | memberVisited @a i visited -> error "Inf"
+        | otherwise                  -> sbs (insertVisited @a i visited) s v'
+      Nothing -> v
+  sbs visited s (Rec sop) = Rec $ hcmap (Proxy @(Compose Substitutable Term)) (sbs visited s) sop
 
 -- >>> ftv acceptable
 -- FreeVars { [Char] -> [1], Foo -> [1] }
@@ -391,8 +426,7 @@ foldSubstitution f (Substitution s) = mconcat . map collapseIM $ toList s
 instance Substitutable Substitution where
   s1 @@ s2 = s1 `unionSubst` s2
   ftv s    = foldSubstitution ftv s
-
--- >>> ftv ex_substitution
+  sbs      = undefined
 
 data UnificationError = IncompatibleUnification | OccursCheckFailed | UnificationError
   deriving (Show)
@@ -503,9 +537,7 @@ bindv st i t = do
 -- >>> evalUnification $ unifyVal ex5' ex5'var2
 -- Left IncompatibleUnification
 
--- Let's do an example with lists
-
--- I need the smart constructors
+-- Let's do an example with lists: I need the smart constructors
 nil :: Term [a]
 nil = Con []
 
@@ -525,15 +557,30 @@ ex_list1_3 = cons (Con 100) (cons (Var 3) nil)
 
 -- Let's see an example with an infinite solution, the prolog [a, X] = X
 
-ex_list2_1, ex_list2_2 :: Term [Int]
+ex_list2_1, ex_list2_2, ex_list2_3 :: Term [Int]
 ex_list2_1 = cons (Con 1) (Var 1)
 ex_list2_2 = Var 1
+ex_list2_3 = cons (Var 2) (cons (Var 3) (Var 4))
 
 -- >>> runUnification (unifyVal ex_list2_1 ex_list2_2)
 -- (Right (: (Con 1) (Var 1)),Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
 
 -- >>> runUnification (unifyVal ex_list2_2 ex_list2_1)
 -- (Right (: (Con 1) (Var 1)),Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
+
+-- >>> unify ex_list2_1 ex_list2_2 >>= unify ex_list2_3
+-- Right (: (Con 1) (: (Var 3) (Var 4)))
+-- >>> unify ex_list2_1 ex_list2_3 >>= unify ex_list2_2
+-- Right (: (Con 1) (: (Var 3) (Var 4)))
+-- >>> unify ex_list2_2 ex_list2_3 >>= unify ex_list2_1
+-- Right (: (Con 1) (: (Var 3) (Var 4)))
+
+-- >>> runUnification $ unifyVal ex_list2_1 ex_list2_2 >>= unifyVal ex_list2_3
+-- (Right (: (Con 1) (: (Con 1) (: (Con 1) (: (Con 1) (: (Con 1) (Var 1)))))),Substitution { [Int] -> [(1,: (Con 1) (Var 1)),(4,: (Con 1) (Var 1))], Int -> [(2,Con 1),(3,Con 1)] })
+-- >>> runUnification $ unifyVal ex_list2_1 ex_list2_3 >>= unifyVal ex_list2_2
+-- (Right (: (Con 1) (: (Con 1) (: (Var 3) (Var 4)))),Substitution { [Int] -> [(1,: (Var 3) (Var 4)),(4,: (Var 3) (Var 4))], Int -> [(2,Con 1),(3,Con 1)] })
+-- >>> runUnification $ unifyVal ex_list2_2 ex_list2_3 >>= unifyVal ex_list2_1
+-- (Right (: (Con 1) (: (Con 1) (: (Con 1) (: (Con 1) (: (Var 3) (Var 4)))))),Substitution { [Int] -> [(1,: (Var 2) (: (Var 3) (Var 4))),(4,: (Var 3) (Var 4))], Int -> [(2,Con 1),(3,Con 1)] })
 
 --------------------------------------------------------------------------------
 -- Utilities
