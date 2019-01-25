@@ -373,11 +373,13 @@ insertVisited i (Visited tm) =
 --------------------------------------------------------------------------------    
 
 class Substitutable a where
+  -- TODO: decide an interface for @@ vs sbs
   (@@) :: Substitution -> a -> a
   ftv  :: a -> FreeVars
   sbs  :: Visited -> Substitution -> a -> a
 
 instance {-# overlaps #-} Substitutable (Term Int) where
+  -- TODO: decide an interface for @@ vs sbs
   s @@ (Var i) = maybe (Var i) id (lookupSubst i s)
   _ @@ (Con i) = Con i
   _ @@ (Rec _) = errorRecOnSimpleTypes
@@ -387,6 +389,7 @@ instance {-# overlaps #-} Substitutable (Term Int) where
   sbs = undefined
 
 instance {-# overlaps #-} Substitutable (Term Char) where
+  -- TODO: decide an interface for @@ vs sbs
   s @@ (Var i) = maybe (Var i) id (lookupSubst i s)
   _ @@ (Con c) = Con c
   _ @@ (Rec _) = errorRecOnSimpleTypes
@@ -396,6 +399,7 @@ instance {-# overlaps #-} Substitutable (Term Char) where
   sbs = undefined
 
 instance {-# overlappable #-}
+  -- TODO: decide an interface for @@ vs sbs
   (Typeable a, All2 (Compose Substitutable Term) (Code a), Generic a) => Substitutable (Term a) where
   s @@ (Var i) = maybe (Var i) id (lookupSubst i s)
   _ @@ (Con i) = Con i
