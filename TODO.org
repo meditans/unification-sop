@@ -1,0 +1,19 @@
+#+TITLE: TODO
+
+* REL: Cabalize the library
+* REL: Write a test suite
+* REL: Write a benchmark suite
+* REL: Write a changelog
+* REL: Write a readme
+* QOL: fresh variables, in the monad
+So that I don't have to use directly the int variables.
+* Research the other optimizations suggested by wrengr
+** Original message
+there are twoish classes of things I did. First are representational
+optimizations; second are algorithmic optimizations. For the former, this
+includes both generic things like node fusion, and Haskell-specific things like
+strictness/unboxing and some ADT golfing. For the latter, the two key things are
+path compression (only for the "ranked" implementation) and balanced unions
+
+The latter two should be described on
+https://en.wikipedia.org/wiki/Disjoint-set_data_structure along with references

@@ -1,2 +1,5 @@
 *.hi
 *.o
+/.dir-locals.el
+/.ghc.environment.*
+/dist-newstyle/*
