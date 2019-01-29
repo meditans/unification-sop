@@ -39,6 +39,7 @@ import Control.Monad.Except
 import Generic.Unification.Term
 import Generic.Unification.Term.Internal (errorRecOnSimpleTypes)
 import Generic.Unification.Substitution
+import qualified Generic.Unification.Substitution as Subst (empty, singleton, lookup)
 
 -- | An error to encode what could go wrong in the unification procedure: it may
 -- fail, or it may fail a occur check.
@@ -53,11 +54,11 @@ newtype Unification a
 
 -- | Get the result back
 evalUnification :: Unification a -> Either UnificationError a
-evalUnification a = evalState (runExceptT (unUnification a)) emptySubst
+evalUnification a = evalState (runExceptT (unUnification a)) Subst.empty
 
 -- | Get the result and the unferlying substitution back
 runUnification :: Unification a -> (Either UnificationError a, Substitution)
-runUnification a = runState (runExceptT (unUnification a)) emptySubst
+runUnification a = runState (runExceptT (unUnification a)) Subst.empty
 
 -- | Convenience function to run the unification of two terms
 unify :: Unifiable a => a -> a -> Either UnificationError a
@@ -81,7 +82,7 @@ instance {-# overlappable #-} Unifiable (Term Int) where
   uni _ v@(Var i) (Var j)  | i == j     = pure v
   uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
     where
-      mbv = lookupSubst @Int i st
+      mbv = Subst.lookup @Int i st
   uni st (Var i) t         | otherwise  = bindv st i t
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
@@ -93,7 +94,7 @@ instance {-# overlappable #-} Unifiable (Term Char) where
   uni _ v@(Var i) (Var j)  | i == j     = pure v
   uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
     where
-      mbv = lookupSubst @Char i st
+      mbv = Subst.lookup @Char i st
   uni st (Var i) t         | otherwise  = bindv st i t
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
@@ -105,7 +106,7 @@ instance {-# overlappable #-} Unifiable (Term String) where
   uni _ v@(Var i) (Var j)  | i == j     = pure v
   uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
     where
-      mbv = lookupSubst @String i st
+      mbv = Subst.lookup @String i st
   uni st (Var i) t         | otherwise  = bindv st i t
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
@@ -124,7 +125,7 @@ instance {-# overlappable #-}
     uni _ v@(Var i) (Var j)  | i == j     = pure v
     uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
       where
-        mbv = lookupSubst @a i st
+        mbv = Subst.lookup @a i st
     uni st (Var i) t         | otherwise  = bindv st i t
     uni st t       v@(Var _)              = uni st v t
     uni _ (Rec t1) (Rec t2)
@@ -151,7 +152,7 @@ bindv
   :: forall a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable (Term a))
   => Substitution -> Int -> Term a -> Unification (Term a)
 bindv st i t = do
-  put (singletonSubst i t @@ st)
+  put (Subst.singleton i t @@ st)
   pure t
 
 -- TODO Move the examples
