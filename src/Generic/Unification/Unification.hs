@@ -7,7 +7,9 @@
 -- Stability   :  experimental
 -- Portability :  non-portable
 --
--- This module defines
+-- This module implements the unification algorithm described in `Efficient
+-- functional Unification and Substitution` by A.Dijkstra. Further optimisations
+-- may come in future.
 --
 --------------------------------------------------------------------------------
 
@@ -19,7 +21,14 @@
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
-module Generic.Unification.Unification where
+module Generic.Unification.Unification
+  ( UnificationError(..)
+  , Unification
+  , evalUnification
+  , runUnification
+  , unify
+  , Unifiable(..)
+  ) where
 
 import Generics.SOP hiding (fromList)
 import Data.Typeable
@@ -28,22 +37,29 @@ import Control.Monad.State
 import Control.Monad.Except
 
 import Generic.Unification.Term
+import Generic.Unification.Term.Internal (errorRecOnSimpleTypes)
 import Generic.Unification.Substitution
 
+-- | An error to encode what could go wrong in the unification procedure: it may
+-- fail, or it may fail a occur check.
 data UnificationError = IncompatibleUnification | OccursCheckFailed
   deriving (Show)
 
+-- | A monad for unification
 newtype Unification a
   = Unification
   { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
+-- | Get the result back
 evalUnification :: Unification a -> Either UnificationError a
 evalUnification a = evalState (runExceptT (unUnification a)) emptySubst
 
+-- | Get the result and the unferlying substitution back
 runUnification :: Unification a -> (Either UnificationError a, Substitution)
 runUnification a = runState (runExceptT (unUnification a)) emptySubst
 
+-- | Convenience function to run the unification of two terms
 unify :: Unifiable a => a -> a -> Either UnificationError a
 unify a b = evalUnification (unifyVal a b)
 
@@ -51,6 +67,9 @@ unify a b = evalUnification (unifyVal a b)
 -- Unifiable
 --------------------------------------------------------------------------------
 
+-- | This is the class that offers the interface for unification. The function
+-- that I expect a user to run is unifyVal, while uni is only included for
+-- implementation purposes.
 class Unifiable a where
   unifyVal :: a   -> a -> Unification a
   uni :: Substitution -> a -> a -> Unification a
@@ -91,6 +110,7 @@ instance {-# overlappable #-} Unifiable (Term String) where
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
 
+-- TODO: can I simplify these constraints?
 instance {-# overlappable #-}
   forall a. (Typeable a, Show a, Eq a, Generic a, Substitutable (Term a), HasDatatypeInfo a
           , All2 (Compose Show Term) (Code a)
@@ -125,12 +145,16 @@ instance {-# overlappable #-}
       | otherwise = throwError IncompatibleUnification
     uni _ _ _ = throwError IncompatibleUnification
 
+-- | This function binds an int to a term in a substitution. Intended for
+-- private module use.
 bindv
   :: forall a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable (Term a))
   => Substitution -> Int -> Term a -> Unification (Term a)
 bindv st i t = do
   put (singletonSubst i t @@ st)
   pure t
+
+-- TODO Move the examples
 
 -- >>> unify ex5' ex5'
 -- Right (fooS (Con "ciao") (fooS (Var 1) (Con (FooI 2))))
@@ -188,11 +212,15 @@ ex_list2_3 = cons (Var 2) (cons (Var 3) (Var 4))
 -- Utilities
 --------------------------------------------------------------------------------
 
+-- | A synonym for (,) that I use to zip together datatypes in the generic procedure.
 data Pair a = Pair a a
 
+-- Unfortunately I cannot express the fact that I will always have the Just
+-- case, in the generic implementation of uni
 unsafePair :: forall a. (:.:) Maybe Term a -> Term a -> (Pair :.: Term) a
 unsafePair (Comp (Just t1)) t2 = Comp $ Pair t1 t2
 unsafePair (Comp Nothing)   _  = error "Structures should be matched"
 
+-- Convenience function
 sameConstructor :: SOP a b -> SOP a b -> Bool
 sameConstructor a b = hindex a == hindex b

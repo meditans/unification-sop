@@ -16,7 +16,7 @@ library
   exposed-modules: Generic.Unification.Term
                  , Generic.Unification.Substitution
                  , Generic.Unification.Unification
-  -- other-modules:
+  other-modules:   Generic.Unification.Term.Internal
   -- other-extensions:
   build-depends:       base
                      , pretty-show

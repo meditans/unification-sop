@@ -20,26 +20,35 @@
              GADTs, KindSignatures, RankNTypes, ScopedTypeVariables,
              TypeApplications, UndecidableInstances #-}
 
-module Generic.Unification.Term where
+module Generic.Unification.Term
+  ( Term(..)
+  ) where
 
 import           Data.Char ( toLower )
 import qualified GHC.Generics as GHC
 import           Generics.SOP
 import           Text.Show.Combinators
 
+import Generic.Unification.Term.Internal (errorRecOnSimpleTypes)
+
+-- | Term is the datatype which is inteded to be the equivalent of a prolog
+-- term. Picture taking a haskell value, and drill some holes in it in which you
+-- can put logical variables.
 data Term a
   = Var Int                 -- ^ A logical variable
   | Con a                   -- ^ A constant, determinate value
   | Rec (SOP Term (Code a)) -- ^ The constructor, and recursive terms
 
--- And an example
+-- | This is an example we'll use throughout the package
 data Foo = FooI Int | FooS String Foo
     deriving ( Show, Eq, GHC.Generic )
 
 instance Generic Foo
 instance HasDatatypeInfo Foo
 
--- Some terms:
+-- TODO: Move the examples
+
+-- | Some example terms (write the prolog equivalent)
 ex1, ex2, ex3, ex4 :: Term Foo
 ex1 = Var 1
 
@@ -56,7 +65,8 @@ acceptable = Rec . SOP . S . Z $ (Var 1) :* (Var 1) :* Nil
 -- and this means that the two variables live at different types, so one is the
 -- first variable of type String, and the second is the first variable of type
 -- Foo.
--- Smart constructors for terms.
+
+-- | Make the case for smart constructors for terms.
 fooS :: Term String -> Term Foo -> Term Foo
 fooS ts tf = Rec . SOP . S . Z $ ts :* tf :* Nil
 
@@ -73,12 +83,6 @@ ex5'var2 = fooS (Var 1) (fooS (Con "hey") (Con $ FooI 2))
 
 -- What remains to be done here is not letting users directly write the ints,
 -- but instead offering a monadic framework in which they can express variables.
---------------------------------------------------------------------------------
--- Show instances
---------------------------------------------------------------------------------
-errorRecOnSimpleTypes :: a
-errorRecOnSimpleTypes =
-    error "You can't have a Rec constructor on primitive types"
 
 --------------------------------------------------------------------------------
 -- Show instances
