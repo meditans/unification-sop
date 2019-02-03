@@ -17,7 +17,6 @@ library
                  , Generic.Unification.Substitution
                  , Generic.Unification.Unification
                  , Generic.Unification.Tutorial
-                 , Generic.Unification.Prolog
                  , Generic.Unification.Hinze
   other-modules:   Generic.Unification.Term.Internal
   -- other-extensions:
