@@ -197,7 +197,15 @@ memb a (b:bs) = unifyB a b `amb` memb a bs
 
 memb2 :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic (Term a)
 memb2 a []     = fail
-memb2 a (b:bs) = (Logic $ lift (unifyVal a b)) `amb` memb a bs
+memb2 a (b:bs) = a === b `amb` memb2 a bs
+
+memb3 :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic (Term a, Substitution)
+memb3 a []     = fail
+memb3 a (b:bs) = (do n <- a === b; s <- get; pure (n, s) ) `amb` memb3 a bs
+
+(===) :: Unifiable a => a -> a -> Logic a
+a === b = Logic $ lift (unifyVal a b)
+
 
 data Pair a = Pair a a deriving (Show, Eq, GHC.Generic)
 instance Generic (Pair a) where
@@ -254,10 +262,11 @@ runLogic = runUnification . down . sols . unLogic
 -- >>> evalLogic $ memb key dict
 -- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
 -- >>> runLogic $ memb2 key dict
--- (Right [pair (Con 1) (Con 2),pair (Con 1) (Con 4)],Substitution { Int -> [(1,Con 2)] })
+-- (Left IncompatibleUnification,Substitution { Int -> [(1,Con 2)] })
 -- >>> evalLogic $ memb2 key dict
--- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+-- []
 
 -- The substitution contains the last used substitution:
+
 -- >>> runLogic $ memb2 (pair (Var 1) (Var 2)) dict
--- (Right [pair (Con 1) (Con 2),pair (Con 2) (Con 3),pair (Con 1) (Con 4)],Substitution { Int -> [(1,Con 1),(2,Con 2)] })
+-- (Left IncompatibleUnification,Substitution { Int -> [(1,Con 1),(2,Con 2)] })
