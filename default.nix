@@ -1,5 +1,6 @@
 { mkDerivation, base, containers, doctest, doctest-discover
 , generics-sop, logict, mtl, pretty-show, show-combinators, stdenv
+, typerep-map
 }:
 mkDerivation {
   pname = "unification-sop";
@@ -7,7 +8,7 @@ mkDerivation {
   src = ./.;
   libraryHaskellDepends = [
     base containers generics-sop logict mtl pretty-show
-    show-combinators
+    show-combinators typerep-map
   ];
   testHaskellDepends = [ base doctest doctest-discover ];
   license = stdenv.lib.licenses.bsd3;

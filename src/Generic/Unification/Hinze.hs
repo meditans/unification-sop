@@ -254,9 +254,10 @@ runLogic = runUnification . down . sols . unLogic
 -- >>> evalLogic $ memb key dict
 -- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
 -- >>> runLogic $ memb2 key dict
--- ( Right [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
--- , Substitution {}
--- )
-
+-- (Right [pair (Con 1) (Con 2),pair (Con 1) (Con 4)],Substitution { Int -> [(1,Con 2)] })
 -- >>> evalLogic $ memb2 key dict
 -- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+
+-- The substitution contains the last used substitution:
+-- >>> runLogic $ memb2 (pair (Var 1) (Var 2)) dict
+-- (Right [pair (Con 1) (Con 2),pair (Con 2) (Con 3),pair (Con 1) (Con 4)],Substitution { Int -> [(1,Con 1),(2,Con 2)] })
