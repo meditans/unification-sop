@@ -252,21 +252,23 @@ newtype Logic a = Logic { unLogic :: CutT Unification a }
 evalLogic :: Logic a -> [a]
 evalLogic = either (const []) id . evalUnification . down . sols . unLogic
 
-runLogic :: Logic a -> (Either UnificationError [a], Substitution)
+-- runLogic :: Logic a -> _
+runLogic :: Logic a -> Either UnificationError ([a], Substitution)
 runLogic = runUnification . down . sols . unLogic
 
 -- >>> runLogic $ memb key dict
--- ( Right [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
--- , Substitution {}
--- )
+-- Right
+--   ( [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+--   , Substitution {}
+--   )
 -- >>> evalLogic $ memb key dict
 -- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
 -- >>> runLogic $ memb2 key dict
--- (Left IncompatibleUnification,Substitution { Int -> [(1,Con 2)] })
+-- Left IncompatibleUnification
 -- >>> evalLogic $ memb2 key dict
 -- []
 
 -- The substitution contains the last used substitution:
 
 -- >>> runLogic $ memb2 (pair (Var 1) (Var 2)) dict
--- (Left IncompatibleUnification,Substitution { Int -> [(1,Con 1),(2,Con 2)] })
+-- Left IncompatibleUnification

@@ -49,16 +49,17 @@ data UnificationError = IncompatibleUnification | OccursCheckFailed
 -- | A monad for unification
 newtype Unification a
   = Unification
-  { unUnification :: ExceptT UnificationError (State Substitution) a }
+  { unUnification :: StateT Substitution (Except UnificationError) a }
+  -- { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
 -- | Get the result back
 evalUnification :: Unification a -> Either UnificationError a
-evalUnification a = evalState (runExceptT (unUnification a)) Subst.empty
+evalUnification = runExcept . ($ Subst.empty) . evalStateT . unUnification
 
 -- | Get the result and the unferlying substitution back
-runUnification :: Unification a -> (Either UnificationError a, Substitution)
-runUnification a = runState (runExceptT (unUnification a)) Subst.empty
+runUnification :: Unification a -> Either UnificationError (a, Substitution)
+runUnification = runExcept . ($ Subst.empty) . runStateT . unUnification
 
 -- | Convenience function to run the unification of two terms
 unify :: Unifiable a => a -> a -> Either UnificationError a
