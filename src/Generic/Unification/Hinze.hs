@@ -2,7 +2,7 @@
 -- Hinze, because I only want a clear denotational semantic for now. This is
 -- done as an experiment, and will not be part of the final package.
 
-{-# LANGUAGE ExistentialQuantification, RankNTypes, FlexibleInstances, UndecidableInstances, FlexibleContexts, DeriveGeneric #-}
+{-# LANGUAGE ExistentialQuantification, RankNTypes, FlexibleInstances, UndecidableInstances, FlexibleContexts, DeriveGeneric, GeneralizedNewtypeDeriving, MultiParamTypeClasses #-}
 
 module Generic.Unification.Hinze where
 
@@ -11,9 +11,13 @@ import Control.Monad hiding (fail)
 import Control.Monad.Identity hiding (fail)
 import qualified GHC.Generics as GHC
 import Generics.SOP
+import Control.Monad.Error hiding (fail)
+import Control.Monad.Trans
+import Control.Monad.State hiding (fail)
 
 import Generic.Unification.Term
 import Generic.Unification.Unification
+import Generic.Unification.Substitution
 
 -- | Important classes
 
@@ -191,13 +195,17 @@ memb :: (Unifiable (Term a), Backtr m) => Term a -> [Term a] -> m (Term a)
 memb a []     = fail
 memb a (b:bs) = unifyB a b `amb` memb a bs
 
+memb2 :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic (Term a)
+memb2 a []     = fail
+memb2 a (b:bs) = (Logic $ lift (unifyVal a b)) `amb` memb a bs
+
 data Pair a = Pair a a deriving (Show, Eq, GHC.Generic)
 instance Generic (Pair a) where
 instance HasDatatypeInfo (Pair a) where
 
 pair :: Term a -> Term a -> Term (Pair a)
 pair a b = Rec . SOP . Z $ a :* b :* Nil
-  
+
 key :: Term (Pair Int)
 key = pair (Con 1) (Var 1)
 
@@ -208,13 +216,47 @@ dict =
   , pair (Con 1) (Con 4)
   ]
 
--- >>> runB $ sols $ memb key dict
--- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+-- >>> runB $ do a <- sols $ memb key dict ; return (a, key)
+-- ( [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+-- , pair (Con 1) (Var 1)
+-- )
 --
 
--- But this is not what I have in mind, because it resets the substitutions
+-- But this ^ is not what I have in mind, because it resets the substitutions
 -- every time. Instead I want the substitutions to be maintained.
--- To show the problem:
 --
 
--- instantiatedDif
+--------------------------------------------------------------------------------
+-- Modern style
+--------------------------------------------------------------------------------
+
+instance MonadTrans CutT where
+  lift m = CutT $ \k f -> m >>= \a -> k a f
+
+instance MonadState s m => MonadState s (CutT m) where
+  get   = lift get
+  put   = lift . put
+  state = lift . state
+
+newtype Logic a = Logic { unLogic :: CutT Unification a }
+  deriving (Functor, Applicative, Monad, Backtr, Cut, MonadState Substitution)
+
+evalLogic :: Logic a -> [a]
+evalLogic = either (const []) id . evalUnification . down . sols . unLogic
+
+runLogic :: Logic a -> (Either UnificationError [a], Substitution)
+runLogic = runUnification . down . sols . unLogic
+
+-- >>> runLogic $ memb key dict
+-- ( Right [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+-- , Substitution {}
+-- )
+-- >>> evalLogic $ memb key dict
+-- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+-- >>> runLogic $ memb2 key dict
+-- ( Right [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+-- , Substitution {}
+-- )
+
+-- >>> evalLogic $ memb2 key dict
+-- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
