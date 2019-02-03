@@ -23,7 +23,7 @@
 
 module Generic.Unification.Unification
   ( UnificationError(..)
-  , Unification
+  , Unification(..)
   , evalUnification
   , runUnification
   , unify
