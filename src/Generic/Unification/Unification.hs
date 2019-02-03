@@ -68,12 +68,11 @@ unify a b = evalUnification (unifyVal a b)
 -- Unifiable
 --------------------------------------------------------------------------------
 
--- | This is the class that offers the interface for unification. The function
--- that I expect a user to run is unifyVal, while uni is only included for
--- implementation purposes.
-class Unifiable a where
+-- | This is the class that offers the interface for unification. The user of
+-- the library is not supposed to add instances to this class.
+class (Substitutable a) => Unifiable a where
   {-# minimal unifyVal #-}
-  unifyVal :: a   -> a -> Unification a
+  unifyVal :: a -> a -> Unification a
   uni :: Substitution -> a -> a -> Unification a
 
 instance {-# overlappable #-} Unifiable (Term Int) where
