@@ -27,7 +27,7 @@ module Generic.Unification.Unification
   , evalUnification
   , runUnification
   , unify
-  , Unifiable(..)
+  , Unifiable(unifyVal)
   ) where
 
 import Generics.SOP hiding (fromList)
@@ -72,6 +72,7 @@ unify a b = evalUnification (unifyVal a b)
 -- that I expect a user to run is unifyVal, while uni is only included for
 -- implementation purposes.
 class Unifiable a where
+  {-# minimal unifyVal #-}
   unifyVal :: a   -> a -> Unification a
   uni :: Substitution -> a -> a -> Unification a
 
