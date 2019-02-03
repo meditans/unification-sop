@@ -23,9 +23,9 @@
 
 module Generic.Unification.Unification
   ( UnificationError(..)
-  , Unification(..)
-  , evalUnification
-  , runUnification
+  , UnificationT(..)
+  , evalUnificationT
+  , runUnificationT
   , unify
   , Unifiable(unifyVal)
   ) where
@@ -47,23 +47,23 @@ data UnificationError = IncompatibleUnification | OccursCheckFailed
   deriving (Show)
 
 -- | A monad for unification
-newtype Unification a
+newtype UnificationT m a
   = Unification
-  { unUnification :: StateT Substitution (Except UnificationError) a }
+  { unUnificationT :: StateT Substitution (ExceptT UnificationError m) a }
   -- { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
 -- | Get the result back
-evalUnification :: Unification a -> Either UnificationError a
-evalUnification = runExcept . ($ Subst.empty) . evalStateT . unUnification
+evalUnificationT :: (Monad m) => UnificationT m a -> m (Either UnificationError a)
+evalUnificationT = runExceptT . ($ Subst.empty) . evalStateT . unUnificationT
 
 -- | Get the result and the unferlying substitution back
-runUnification :: Unification a -> Either UnificationError (a, Substitution)
-runUnification = runExcept . ($ Subst.empty) . runStateT . unUnification
+runUnificationT :: (Monad m) => UnificationT m a -> m (Either UnificationError (a, Substitution))
+runUnificationT = runExceptT . ($ Subst.empty) . runStateT . unUnificationT
 
 -- | Convenience function to run the unification of two terms
-unify :: Unifiable a => a -> a -> Either UnificationError a
-unify a b = evalUnification (unifyVal a b)
+unify :: (Monad m, Unifiable a) => a -> a -> m (Either UnificationError a)
+unify a b = evalUnificationT (unifyVal a b)
 
 --------------------------------------------------------------------------------
 -- Unifiable
@@ -73,8 +73,8 @@ unify a b = evalUnification (unifyVal a b)
 -- the library is not supposed to add instances to this class.
 class (Substitutable a) => Unifiable a where
   {-# minimal unifyVal #-}
-  unifyVal :: a -> a -> Unification a
-  uni :: Substitution -> a -> a -> Unification a
+  unifyVal :: (Monad m) => a -> a -> UnificationT m a
+  uni :: (Monad m) => Substitution -> a -> a -> UnificationT m a
 
 instance {-# overlappable #-} Unifiable (Term Int) where
   unifyVal ta tb = do { st <- get; uni st ta tb }
@@ -150,8 +150,8 @@ instance {-# overlappable #-}
 -- | This function binds an int to a term in a substitution. Intended for
 -- private module use.
 bindv
-  :: forall a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable (Term a))
-  => Substitution -> Int -> Term a -> Unification (Term a)
+  :: forall m a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable (Term a), Monad m)
+  => Substitution -> Int -> Term a -> UnificationT m (Term a)
 bindv st i t = do
   put (Subst.singleton i t @@ st)
   pure t
