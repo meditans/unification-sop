@@ -2,7 +2,7 @@
 -- Hinze, because I only want a clear denotational semantic for now. This is
 -- done as an experiment, and will not be part of the final package.
 
-{-# LANGUAGE ExistentialQuantification, RankNTypes, FlexibleInstances, UndecidableInstances, FlexibleContexts, DeriveGeneric, GeneralizedNewtypeDeriving, MultiParamTypeClasses, TupleSections #-}
+{-# LANGUAGE ExistentialQuantification, RankNTypes, FlexibleInstances, UndecidableInstances, FlexibleContexts, DeriveGeneric, GeneralizedNewtypeDeriving, MultiParamTypeClasses, TupleSections, DerivingStrategies, DerivingVia #-}
 
 module Generic.Unification.Hinze where
 
@@ -282,6 +282,7 @@ dict =
 -- this is morally s -> m [Either e (a, s)]
 newtype Logic2 s e m a = Logic2 { unLogic2 :: StateT s (ExceptT e (BacktrT m)) a }
   deriving (Functor, Applicative, Monad)
+  deriving Backtr via StateT s (ExceptT e (BacktrT m))
 
 runLogic2 :: (Monad m) => Logic2 s e m a -> s -> m [Either e (a, s)]
 runLogic2 l ini = down . sols . runExceptT . ($ini) . runStateT $ unLogic2 l
@@ -311,3 +312,45 @@ instance Backtr m => Backtr (StateT s m) where
 instance Cut m => Cut (StateT s m) where
   cut = StateT $ \s -> fmap (,s) cut
   call (StateT t) = StateT $ \s -> call (t s)
+
+--------------------------------------------------------------------------------
+-- Logic3, directly using UnificationT
+--------------------------------------------------------------------------------
+
+-- this is morally s -> m [Either e (a, s)]
+newtype Logic3 a = Logic3 { unLogic3 :: UnificationT (CutT Identity) a }
+  deriving (Functor, Applicative, Monad, Backtr, Cut, MonadState Substitution, MonadError UnificationError)
+    via StateT Substitution (ExceptT UnificationError (CutT Identity))
+
+runLogic3 :: Logic3 a -> s -> [Either UnificationError (a, Substitution)]
+runLogic3 l ini = runIdentity . down . sols . runUnificationT $ unLogic3 l
+
+evalLogic3 :: Logic3 a -> s -> [(a, Substitution)]
+evalLogic3 l ini = runIdentity . fmap rights . down . sols . runUnificationT $ unLogic3 l
+
+evalLogic3' :: Logic3 a -> s -> [a]
+evalLogic3' l ini = runIdentity . fmap (Prelude.map fst . rights) . down . sols . runUnificationT $ unLogic3 l
+
+(===) :: Unifiable a => a -> a -> Logic3 a
+a === b = Logic3 (unifyVal a b)
+
+memb :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic3 (Term a)
+memb a []     = fail
+memb a (b:bs) = a === b `amb` memb a bs
+
+-- >>> flip runLogic3 Subst.empty $ memb key dict
+-- [ Right (pair (Con 1) (Con 2), Substitution { Int -> [(1,Con 2)] })
+-- , Left IncompatibleUnification
+-- , Right (pair (Con 1) (Con 4), Substitution { Int -> [(1,Con 4)] })]
+
+-- >>> flip evalLogic3 Subst.empty $ memb key dict
+-- [ (pair (Con 1) (Con 2),Substitution { Int -> [(1,Con 2)] })
+-- , (pair (Con 1) (Con 4),Substitution { Int -> [(1,Con 4)] })]
+
+-- >>> flip evalLogic3' Subst.empty $ memb key dict
+-- [ pair (Con 1) (Con 2) , pair (Con 1) (Con 4) ]
+
+-- >>> flip runLogic3 Subst.empty $ memb (pair (Var 1) (Var 2)) dict
+-- [ Right (pair (Con 1) (Con 2), Substitution { Int -> [(1,Con 1),(2,Con 2)] })
+-- , Right (pair (Con 2) (Con 3), Substitution { Int -> [(1,Con 2),(2,Con 3)] })
+-- , Right (pair (Con 1) (Con 4), Substitution { Int -> [(1,Con 1),(2,Con 4)] })]
