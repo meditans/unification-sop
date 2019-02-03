@@ -2,7 +2,7 @@
 -- Hinze, because I only want a clear denotational semantic for now. This is
 -- done as an experiment, and will not be part of the final package.
 
-{-# LANGUAGE ExistentialQuantification, RankNTypes, FlexibleInstances, UndecidableInstances, FlexibleContexts, DeriveGeneric, GeneralizedNewtypeDeriving, MultiParamTypeClasses #-}
+{-# LANGUAGE ExistentialQuantification, RankNTypes, FlexibleInstances, UndecidableInstances, FlexibleContexts, DeriveGeneric, GeneralizedNewtypeDeriving, MultiParamTypeClasses, TupleSections #-}
 
 module Generic.Unification.Hinze where
 
@@ -15,6 +15,7 @@ import Control.Monad.Except hiding (fail)
 import Control.Monad.Trans
 import Control.Monad.State hiding (fail)
 import Data.Either (rights)
+import Data.Maybe (listToMaybe)
 
 import Generic.Unification.Term
 import Generic.Unification.Unification
@@ -188,24 +189,24 @@ runB = run
 -- and so composes in greater logical programs.
 
 -- This lifts unification on terms to a monadic action in backtrackable monads
-unifyB :: (Unifiable (Term a), Backtr m) => Term a -> Term a -> m (Term a)
-unifyB t1 t2 = either (const fail) pure $ unify t1 t2
+-- unifyB :: (Unifiable (Term a), Backtr m) => Term a -> Term a -> m (Term a)
+-- unifyB t1 t2 = either (const fail) pure $ unify t1 t2
 
 -- ("a", X) `member` [("a", "b"), ("b", "c")]
-memb :: (Unifiable (Term a), Backtr m) => Term a -> [Term a] -> m (Term a)
-memb a []     = fail
-memb a (b:bs) = unifyB a b `amb` memb a bs
+-- memb :: (Unifiable (Term a), Backtr m) => Term a -> [Term a] -> m (Term a)
+-- memb a []     = fail
+-- memb a (b:bs) = unifyB a b `amb` memb a bs
 
-memb2 :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic (Term a)
-memb2 a []     = fail
-memb2 a (b:bs) = a === b `amb` memb2 a bs
+-- memb2 :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic (Term a)
+-- memb2 a []     = fail
+-- memb2 a (b:bs) = a === b `amb` memb2 a bs
 
-memb3 :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic (Term a, Substitution)
-memb3 a []     = fail
-memb3 a (b:bs) = (do n <- a === b; s <- get; pure (n, s) ) `amb` memb3 a bs
+-- memb3 :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic (Term a, Substitution)
+-- memb3 a []     = fail
+-- memb3 a (b:bs) = (do n <- a === b; s <- get; pure (n, s) ) `amb` memb3 a bs
 
-(===) :: Unifiable a => a -> a -> Logic a
-a === b = Logic $ lift (unifyVal a b)
+-- (===) :: Unifiable a => a -> a -> Logic a
+-- a === b = Logic $ lift (unifyVal a b)
 
 
 data Pair a = Pair a a deriving (Show, Eq, GHC.Generic)
@@ -239,23 +240,23 @@ dict =
 -- Modern style
 --------------------------------------------------------------------------------
 
-instance MonadTrans CutT where
-  lift m = CutT $ \k f -> m >>= \a -> k a f
+-- instance MonadTrans CutT where
+--   lift m = CutT $ \k f -> m >>= \a -> k a f
 
-instance MonadState s m => MonadState s (CutT m) where
-  get   = lift get
-  put   = lift . put
-  state = lift . state
+-- instance MonadState s m => MonadState s (CutT m) where
+--   get   = lift get
+--   put   = lift . put
+--   state = lift . state
 
-newtype Logic a = Logic { unLogic :: CutT Unification a }
-  deriving (Functor, Applicative, Monad, Backtr, Cut, MonadState Substitution)
+-- newtype Logic a = Logic { unLogic :: CutT Unification a }
+--   deriving (Functor, Applicative, Monad, Backtr, Cut, MonadState Substitution)
 
-evalLogic :: Logic a -> [a]
-evalLogic = either (const []) id . evalUnification . down . sols . unLogic
+-- evalLogic :: Logic a -> [a]
+-- evalLogic = either (const []) id . evalUnification . down . sols . unLogic
 
--- runLogic :: Logic a -> _
-runLogic :: Logic a -> Either UnificationError ([a], Substitution)
-runLogic = runUnification . down . sols . unLogic
+-- -- runLogic :: Logic a -> _
+-- runLogic :: Logic a -> Either UnificationError ([a], Substitution)
+-- runLogic = runUnification . down . sols . unLogic
 
 -- >>> runLogic $ memb key dict
 -- Right
@@ -294,11 +295,19 @@ evalLogic2' l ini = fmap (Prelude.map fst . rights) . down . sols . runExceptT .
 instance Backtr m => Backtr (ExceptT e m) where
   fail = ExceptT fail
   (ExceptT t1) `amb` (ExceptT t2) = ExceptT $ t1 `amb` t2
-  once (ExceptT t) = ExceptT (undefined $ once t) --- ???
+  once (ExceptT t) = ExceptT (fmap (Right . listToMaybe . rights) $ sols t)
   sols (ExceptT t) = ExceptT (fmap sequence $ sols t)
+
+instance Cut m => Cut (ExceptT e m) where
+  cut  = ExceptT $ fmap Right cut
+  call (ExceptT t) = ExceptT (call t)
 
 instance Backtr m => Backtr (StateT s m) where
   fail = StateT (\_ -> fail)
   (StateT a) `amb` (StateT b) = StateT $ \s -> a s `amb` b s
-  once (StateT a) = StateT $ \s -> (fmap _undefined . once $ a s)
-  sols (StateT t) = StateT $ \s -> (fmap _undefined . sols $ t s)
+  once (StateT a) = StateT $ \s -> fmap ((,s) . fmap fst) . once $ a s
+  sols (StateT t) = StateT $ \s -> fmap ((,s) . fmap fst) . sols $ t s
+
+instance Cut m => Cut (StateT s m) where
+  cut = StateT $ \s -> fmap (,s) cut
+  call (StateT t) = StateT $ \s -> call (t s)
