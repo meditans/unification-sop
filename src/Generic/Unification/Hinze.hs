@@ -11,9 +11,10 @@ import Control.Monad hiding (fail)
 import Control.Monad.Identity hiding (fail)
 import qualified GHC.Generics as GHC
 import Generics.SOP
-import Control.Monad.Error hiding (fail)
+import Control.Monad.Except hiding (fail)
 import Control.Monad.Trans
 import Control.Monad.State hiding (fail)
+import Data.Either (rights)
 
 import Generic.Unification.Term
 import Generic.Unification.Unification
@@ -272,3 +273,32 @@ runLogic = runUnification . down . sols . unLogic
 
 -- >>> runLogic $ memb2 (pair (Var 1) (Var 2)) dict
 -- Left IncompatibleUnification
+
+--------------------------------------------------------------------------------
+-- Logic2, changing the order of the monadic stack
+--------------------------------------------------------------------------------
+
+-- this is morally s -> m [Either e (a, s)]
+newtype Logic2 s e m a = Logic2 { unLogic2 :: StateT s (ExceptT e (BacktrT m)) a }
+  deriving (Functor, Applicative, Monad)
+
+runLogic2 :: (Monad m) => Logic2 s e m a -> s -> m [Either e (a, s)]
+runLogic2 l ini = down . sols . runExceptT . ($ini) . runStateT $ unLogic2 l
+
+evalLogic2 :: (Monad m) => Logic2 s e m a -> s -> m [(a, s)]
+evalLogic2 l ini = fmap rights . down . sols . runExceptT . ($ini) . runStateT $ unLogic2 l
+
+evalLogic2' :: (Monad m) => Logic2 s e m a -> s -> m [a]
+evalLogic2' l ini = fmap (Prelude.map fst . rights) . down . sols . runExceptT . ($ini) . runStateT $ unLogic2 l
+
+instance Backtr m => Backtr (ExceptT e m) where
+  fail = ExceptT fail
+  (ExceptT t1) `amb` (ExceptT t2) = ExceptT $ t1 `amb` t2
+  once (ExceptT t) = ExceptT (undefined $ once t) --- ???
+  sols (ExceptT t) = ExceptT (fmap sequence $ sols t)
+
+instance Backtr m => Backtr (StateT s m) where
+  fail = StateT (\_ -> fail)
+  (StateT a) `amb` (StateT b) = StateT $ \s -> a s `amb` b s
+  once (StateT a) = StateT $ \s -> (fmap _undefined . once $ a s)
+  sols (StateT t) = StateT $ \s -> (fmap _undefined . sols $ t s)
