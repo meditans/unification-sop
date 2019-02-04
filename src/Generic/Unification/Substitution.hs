@@ -7,49 +7,59 @@
 -- Stability   :  experimental
 -- Portability :  non-portable
 --
--- This module defines
+-- This module mainly defines `Substitution`s and related operations, and a
+-- typeclass `Substitutable` to apply substitutions and get free variables.
 --
 --------------------------------------------------------------------------------
 
-{-# language RankNTypes, TypeApplications, DerivingVia, KindSignatures, TypeOperators, ScopedTypeVariables, PolyKinds, FlexibleInstances, FlexibleContexts, UndecidableInstances, ConstraintKinds, GADTs, AllowAmbiguousTypes #-}
+{-# LANGUAGE AllowAmbiguousTypes, ConstraintKinds, DerivingVia            #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, GADTs, KindSignatures   #-}
+{-# LANGUAGE PolyKinds, RankNTypes, ScopedTypeVariables, TypeApplications #-}
+{-# LANGUAGE TypeOperators, UndecidableInstances                          #-}
 
 module Generic.Unification.Substitution
-  ( Constrained (..)
+  ( -- * Constrained
+    Constrained (..)
   , withConstrained
   , WellFormed
+    -- * Substitutions
   , Substitution (..)
+    -- ** Operations on substitutions
   , empty
   , insert
   , singleton
   , lookup
   , union
-  , map
   , fold
+    -- * The substitutable class
+  , Substitutable (..)
+    -- * Other type-indexed structures
+    -- ** Free Variables
   , FreeVars (..)
   , memberFreeVars
+    -- ** Visited Sets
   , Visited (..)
   , memberVisited
   , insertVisited
-  , Substitutable (..)
   ) where
 
-import Prelude hiding (lookup, map)
-import Generics.SOP hiding (fromList)
-import Data.Typeable
-import qualified Data.TypeRepMap as TM
-import qualified Data.IntMap     as IM
-import GHC.Base (Type, coerce)
-import Data.List (intercalate)
-import Data.IntSet (IntSet)
-import qualified Data.IntSet as IS
-import Data.Functor.Const
-import GHC.Exts (toList)
+import           Data.Functor.Const
+import qualified Data.IntMap        as IM
+import           Data.IntSet        (IntSet)
+import qualified Data.IntSet        as IS
+import           Data.List          (intercalate)
+import           Data.Typeable
+import qualified Data.TypeRepMap    as TM
+import           Generics.SOP       hiding (fromList)
+import           GHC.Base           (Type, coerce)
+import           GHC.Exts           (fromList, toList)
+import           Prelude            hiding (lookup, map)
 
 import Generic.Unification.Term
 import Generic.Unification.Term.Internal
 
 --------------------------------------------------------------------------------
--- Substitutions
+-- Constrained and WellFormed
 --------------------------------------------------------------------------------
 
 -- So our substitution should be a map from VarRep to Terms of that type! Maybe
@@ -67,14 +77,44 @@ withConstrained f (Constrained fa) = f fa
 class    (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a)) => WellFormed (a :: Type) where
 instance (Eq a, Eq (Term a), Show (Term a), Substitutable (Term a)) => WellFormed a where
 
--- | A substitution
+--------------------------------------------------------------------------------
+-- Substitutions
+--------------------------------------------------------------------------------
+
+-- | Substitutions map variables (internally represented as Ints) to Terms of a
+-- specific type. A key design principle of this library is that each type has
+-- its set of variables, that do not overlap. So in the following substitution
+-- the variable 1 of type Char tracks the term `Con c` while the variable 1 of
+-- type Int tracks the term `Con 42`. There is no possibility of ambiguity, and
+-- this simplifies the definition of Term.
+--
+-- >>> :set -XTypeApplications
+-- >>> ex_substitution = insert @Char 1 (Con 'c') . insert @Int 1 (Con 42) $ empty :: Substitution
+-- >>> ex_substitution
+-- Substitution { Int -> [(1,Con 42)], Char -> [(1,Con 'c')] }
 newtype Substitution = Substitution (TM.TypeRepMap (Constrained WellFormed (IM.IntMap :.: Term)))
 
+instance Show Substitution where
+  show (Substitution s) = wrap . intercalate ", " . fmap showInner $ toList s
+    where
+      showInner :: TM.WrapTypeable (Constrained WellFormed (IM.IntMap :.: Term)) -> String
+      showInner (TM.WrapTypeable a@(Constrained (Comp im))) =
+        show (typeRep a) ++ " -> " ++ show (toList im)
+      wrap a = "Substitution { "  ++ a ++ " }"
+
+
 -- | The empty substitution, which does not contain variable bindings
+--
+-- >>> empty
+-- Substitution {  }
 empty :: Substitution
 empty = Substitution TM.empty
 
--- | Insert a variable binding into a substitution. This is used like: 
+-- | Insert a variable binding into a substitution
+--
+-- >>> :set -XTypeApplications
+-- >>> insert @Int 1 (Con 42) empty
+-- Substitution { Int -> [(1,Con 42)] }
 insert
   :: forall a. (WellFormed a, Typeable a)
   => Int -> Term a -> Substitution -> Substitution
@@ -84,12 +124,14 @@ insert i ta (Substitution subst) =
     False -> Substitution $ TM.insert @a (Constrained . Comp $ IM.singleton i ta) subst
 
 -- | A substitution with only one variable binding
+--
+-- >>> :set -XTypeApplications
+-- >>> singleton @Int 1 (Con 42)
+-- Substitution { Int -> [(1,Con 42)] }
 singleton :: forall a. (WellFormed a, Typeable a) => Int -> Term a -> Substitution
 singleton i t = insert i t empty
 
 -- TODO: Move the examples
--- ex_substitution :: Substitution
--- ex_substitution = insert @Char 1 (Con 'c') $ insert @Int 1 (Con 1000) empty
 -- ex_substitution2 :: Substitution
 -- ex_substitution2 = insert @Foo 1 ex5' empty
 
@@ -97,6 +139,11 @@ singleton i t = insert i t empty
 -- Substitution { Int -> fromList [(1,Con 1000)], Char -> fromList [(1,Con 'c')] }
 
 -- | Search for a variable in the substitution
+--
+-- >>> lookup @Int 1 $ singleton @Int 1 (Con 42)
+-- Just (Con 42)
+-- >>> lookup @String 1 $ singleton @Int 1 (Con 42)
+-- Nothing
 lookup :: forall a. (Typeable a) => Int -> Substitution -> Maybe (Term a)
 lookup i (Substitution subst) = do
   Constrained (Comp internalMap) <- TM.lookup @a subst
@@ -111,6 +158,9 @@ lookup i (Substitution subst) = do
 
 -- | The union of two substitutions. It has the same bias of union in Data.Map,
 -- if you think a substitution as a [(Type, Value)] map-like structure
+--
+-- >>> union (singleton @Int 1 (Con 42)) (singleton @Char 1 (Con 'c'))
+-- Substitution { Int -> [(1,Con 42)], Char -> [(1,Con 'c')] }
 union :: Substitution -> Substitution -> Substitution
 union (Substitution s1) (Substitution s2) = Substitution $ TM.unionWith union' s1 s2
   where
@@ -119,45 +169,23 @@ union (Substitution s1) (Substitution s2) = Substitution $ TM.unionWith union' s
            -> Constrained WellFormed (IM.IntMap :.: Term) a
     union' (Constrained (Comp m1)) (Constrained (Comp m2))  = Constrained $ Comp (IM.union m1 m2)
 
--- | A function that is executed on every leaf of the substitution
-map :: (forall x. WellFormed x => Term x -> Term x) -> Substitution -> Substitution
-map f (Substitution s) = Substitution $ TM.hoist help1 s
-  where
-    help1 :: Constrained WellFormed (IM.IntMap :.: Term) x
-          -> Constrained WellFormed (IM.IntMap :.: Term) x
-    help1 (Constrained (Comp a)) = Constrained . Comp $ IM.map f a
-
--- >>> :set -XTypeApplications
--- >>> union (GenericPrologTermUniqueType.insert @Int 1 (Con 1) empty) (GenericPrologTermUniqueType.insert @Int 1 (Con 2) empty)
--- TypeRepMap [ Int ]
-
--- Unfortunately the show representation that is given here doesn't let us see
--- the actual content. Let us write a better show function instead:
-
--- | Like the lookup in the TM module, but with the added TypeRep a so that we
--- can specify at which type we are looking
--- lookupTM :: forall k (a :: k) f. Typeable a => TR.TypeRep a -> TM.TypeRepMap f -> Maybe (f a)
--- lookupTM _ = TM.lookup
-
-instance Show Substitution where
-  show (Substitution s) = wrap . intercalate ", " . fmap showInner $ toList s
-    where
-      showInner :: TM.WrapTypeable (Constrained WellFormed (IM.IntMap :.: Term)) -> String
-      showInner (TM.WrapTypeable a@(Constrained (Comp im))) =
-        show (typeRep a) ++ " -> " ++ show (toList im)
-      wrap a = "Substitution { "  ++ a ++ " }"
-
--- >>> :set -XTypeApplications
--- >>> ex_substitution
--- Substitution { Int -> [(1,Con 1000)], Char -> [(1,Con 'c')] }
-
 --------------------------------------------------------------------------------
 -- Unification
 --------------------------------------------------------------------------------
 
--- | This datatype encodes the freevars that we can have in a term or a
--- substitution. Basically, since our variables are overlappable, a set of
--- variables for every type.
+-- | This datatype encodes the free (not bound) variables that we can have in a
+-- term or a substitution. Basically, since our variables are overlappable, a
+-- set of variables for every type.
+--
+-- >>> FreeVars (fromList [TM.WrapTypeable @Int $ Const (IS.fromList [1,2]), TM.WrapTypeable @Char $ Const (IS.fromList [1,3])])
+-- FreeVars { Int -> [1,2], Char -> [1,3] }
+--
+-- Usually one would get a `FreeVars` from using the method `ftv` of the
+-- Substitutable class.
+--
+-- >>> ftv (Var 1 :: Term Int)
+-- FreeVars { Int -> [1] }
+
 newtype FreeVars = FreeVars (TM.TypeRepMap (Const IntSet :: Type -> Type))
 
 instance Semigroup FreeVars where
@@ -177,18 +205,30 @@ instance Show FreeVars where
         show (typeRep a) ++ " -> " ++ show (toList is)
       wrap a = "FreeVars { "  ++ a ++ " }"
 
--- | we can query if a variable is in the FreeVars at a certain type
+-- | We can query if a variable is in the FreeVars at a certain type
+--
+-- >>> :set -XTypeApplications
+-- >>> memberFreeVars @Int 1 (ftv (Var 1 :: Term Int))
+-- True
+-- >>> memberFreeVars @Int 1 (ftv (Var 1 :: Term Char))
+-- False
 memberFreeVars :: forall (a :: Type). (Typeable a) => Int -> FreeVars -> Bool
 memberFreeVars i (FreeVars tm) =
   case TM.lookup @a tm of
     Just (Const is) -> IS.member i is
     Nothing -> False
 
--- And a synonym for visited sets
-
--- | Visited sets: an abstraction in the Dijkstra article that let us avoid
--- expensive occurs check. It is representationally equivalent to FreeVars, ie.
--- it is only a set of ints for every type
+-- | Visited sets: an abstraction in the Dijkstra paper that let us avoid
+-- expensive occurs check in the substitution process, substituting it with
+-- checking visited sets when the substitution is applied. This datatype is
+-- representationally equivalent to `FreeVars`, ie. it is only a `IntSet` for
+-- every type.
+-- 
+-- >>> Visited (fromList [TM.WrapTypeable @Int $ Const (IS.fromList [1,2]), TM.WrapTypeable @Char $ Const (IS.fromList [1,3])])
+-- Visited { Int -> [1,2], Char -> [1,3] }
+--
+-- This datatype is only meant to be used in the library, the user shouldn't
+-- need it.
 newtype Visited = Visited (TM.TypeRepMap (Const IntSet :: Type -> Type))
   deriving (Semigroup, Monoid) via FreeVars
 
@@ -199,17 +239,37 @@ instance Show Visited where
         show (typeRep a) ++ " -> " ++ show (toList is)
       wrap a = "Visited { "  ++ a ++ " }"
 
--- | we can query if a variable at a certain type has been visited
+-- | We can query if a variable at a certain type has been visited
+--
+-- >>> :set -XTypeApplications
+-- >>> memberVisited @Int 1 mempty
+-- False
+-- >>> memberVisited @Int 1 $ insertVisited @Int 1 mempty
+-- True
 memberVisited :: forall (a :: Type). (Typeable a) => Int -> Visited -> Bool
 memberVisited = coerce (memberFreeVars @a)
 
--- | we can signal that a variable at a certain type has been visited
+-- | We can signal that a variable at a certain type has been visited
+--
+-- >>> :set -XTypeApplications
+-- >>> insertVisited @Int 1 mempty
+-- Visited { Int -> [1] }
 insertVisited :: forall (a :: Type). (Typeable a) => Int -> Visited -> Visited
 insertVisited i (Visited tm) =
   Visited $ TM.unionWith
               (\(Const is1) (Const is2) -> Const (IS.union is1 is2))
               (TM.one @a . Const $ IS.singleton i)
               tm
+
+-- | We can fold a substitution in a monoidal value
+-- 
+-- >>> fold (\a -> [show a]) (insert @Char 1 (Con 'c') . insert @Int 1 (Con 42) $ empty)
+-- [ "Con 42" , "Con 'c'" ]
+fold :: forall m. Monoid m => (forall x. WellFormed x => Term x -> m) -> Substitution -> m
+fold f (Substitution s) = mconcat . fmap collapseIM $ toList s
+  where
+    collapseIM :: TM.WrapTypeable (Constrained WellFormed (IM.IntMap :.: Term)) -> m
+    collapseIM (TM.WrapTypeable (Constrained (Comp ita))) = IM.foldr (\ta m -> f ta <> m) mempty ita
 
 --------------------------------------------------------------------------------
 -- Substitutable
@@ -238,7 +298,7 @@ instance {-# overlaps #-} Substitutable (Term Char) where
   s @@ (Var i) = maybe (Var i) id (lookup i s)
   _ @@ (Con c) = Con c
   _ @@ (Rec _) = errorRecOnSimpleTypes
-  ftv (Var i)  = FreeVars $ TM.one @Int (Const $ IS.singleton i)
+  ftv (Var i)  = FreeVars $ TM.one @Char (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
   ftv (Rec _)  = errorRecOnSimpleTypes
   sbs = undefined
@@ -262,16 +322,6 @@ instance {-# overlappable #-}
         | otherwise                  -> sbs (insertVisited @a i visited) s v'
       Nothing -> v
   sbs visited s (Rec sop) = Rec $ hcmap (Proxy @(Compose Substitutable Term)) (sbs visited s) sop
-
--- >>> ftv acceptable
--- FreeVars { [Char] -> [1], Foo -> [1] }
-
--- | We can fold a substitution
-fold :: forall m. Monoid m => (forall x. WellFormed x => Term x -> m) -> Substitution -> m
-fold f (Substitution s) = mconcat . fmap collapseIM $ toList s
-  where
-    collapseIM :: TM.WrapTypeable (Constrained WellFormed (IM.IntMap :.: Term)) -> m
-    collapseIM (TM.WrapTypeable (Constrained (Comp ita))) = IM.foldr (\ta m -> f ta <> m) mempty ita
 
 instance Substitutable Substitution where
   s1 @@ s2 = s1 `union` s2
