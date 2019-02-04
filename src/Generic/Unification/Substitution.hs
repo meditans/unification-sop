@@ -19,12 +19,11 @@
 {-# LANGUAGE DefaultSignatures #-}
 
 module Generic.Unification.Substitution
-  ( -- * Constrained
-    Constrained (..)
-  , withConstrained
+  ( -- * Substitutions
+    Substitution (..)
   , WellFormed
-    -- * Substitutions
-  , Substitution (..)
+  , Constrained (..)
+  , withConstrained
     -- ** Operations on substitutions
   , empty
   , insert
@@ -32,9 +31,9 @@ module Generic.Unification.Substitution
   , lookup
   , union
   , fold
-  , substFtv
-    -- * The substitutable class
-  , Substitutable (..)
+  , substFreeVars
+    -- * The Substitutable class
+  , Substitutable ((@@), ftv)
     -- * Other type-indexed structures
     -- ** Free Variables
   , FreeVars (..)
@@ -67,15 +66,19 @@ import Generic.Unification.Term.Internal
 -- So our substitution should be a map from VarRep to Terms of that type! Maybe
 -- we could use the indexed versions of TypeRep. At that point, the map would be
 
--- | We need a datatype to store something with a constraint
+-- | A datatype that includes a constraint (this is useful because, as a
+-- substitution contains heterogeneous terms, we have to be sure that those
+-- terms have some common behaviour to be able to operate on them, and we use
+-- Constrained to assure that).
 data Constrained c f a = c a => Constrained (f a)
 
--- | The generic eliminator for Constrained
+-- | The generic eliminator for `Constrained`
 withConstrained :: (forall x. c x => f x -> r) -> Constrained c f a -> r
 withConstrained f (Constrained fa) = f fa
 
--- | This is a class that expresses the constraint we need in our substitution
--- elements, and it is used primarly in the definition of substitution.
+-- | This is a class that expresses the constraint we need every type in our
+-- substitution to have. It is an implementation detail of the library, but
+-- helps in understanding which datatype we can have in our substitutions.
 class    (Eq a, Eq (Term a), Show (Term a), Substitutable a) => WellFormed (a :: Type) where
 instance (Eq a, Eq (Term a), Show (Term a), Substitutable a) => WellFormed a where
 
@@ -263,41 +266,50 @@ insertVisited i (Visited tm) =
 -- | We can fold a substitution in a monoidal value
 --
 -- >>> fold (\a -> [show a]) (insert @Char 1 (Con 'c') . insert @Int 1 (Con 42) $ empty)
--- [ "Con 42" , "Con 'c'" ]
+-- ["Con 42","Con 'c'"]
 fold :: forall m. Monoid m => (forall x. WellFormed x => Term x -> m) -> Substitution -> m
 fold f (Substitution s) = mconcat . fmap collapseIM $ toList s
   where
     collapseIM :: TM.WrapTypeable (Constrained WellFormed (IM.IntMap :.: Term)) -> m
     collapseIM (TM.WrapTypeable (Constrained (Comp ita))) = IM.foldr (\ta m -> f ta <> m) mempty ita
 
+-- | Take all variables that are free in a substitution. This amounts to taking
+-- all the free variables of the internal terms
+substFreeVars :: Substitution -> FreeVars
+substFreeVars s = fold ftv s
+
 --------------------------------------------------------------------------------
 -- Substitutable
 --------------------------------------------------------------------------------
 
 -- | This class means that we can calculate the free variables of something and
--- apply to it a substitution.
+-- apply to it a substitution. The default instance signatures appear duplicated
+-- for a <https://github.com/haskell/haddock/issues/567 bug> of haddock.
 class Substitutable a where
-  -- TODO: decide an interface for @@ vs sbs
-  -- | apply a substitution
+  -- | Apply a substitution to a term. This is also where we check for a cycle
+  -- to occur, as we don't do the occur check in the unification algorithm to
+  -- speed it up.
   (@@) :: Substitution -> Term a -> Term a
   default (@@) :: (Typeable a, All2 Substitutable (Code a), Generic a) => Substitution -> Term a -> Term a
-  -- s @@ (Var i) = maybe (Var i) id (lookup i s)
-  -- _ @@ (Con i) = Con i
-  -- s @@ (Rec w) = Rec $ hcmap (Proxy @Substitutable) (s @@) w
-  s @@ v = _what -- sbs empty s v
+  s @@ v = sbs mempty s v
 
-  -- | the free variables in something
-  ftv  :: Term a -> FreeVars
-  default ftv :: (Typeable a, All2 Substitutable (Code a), Generic a) => Term a -> FreeVars
+  -- | Calculate the free variables of a term.
+  ftv         :: Term a -> FreeVars
+  default ftv :: (Typeable a, All2 Substitutable (Code a), Generic a)
+              => Term a -> FreeVars
   ftv (Var i)  = FreeVars $ TM.one @a (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
   ftv (Rec w)  =
     let a :: [FreeVars] = hcollapse $ hcmap (Proxy @Substitutable) (K . ftv) w
-    in foldl (\(FreeVars t1) (FreeVars t2) -> FreeVars $ TM.unionWith (\(Const s1) (Const s2) -> Const (IS.union s1 s2)) t1 t2) (FreeVars TM.empty) a
+    in foldl (\(FreeVars t1) (FreeVars t2) -> FreeVars $ TM.unionWith (\(Const s1) (Const s2) -> Const (IS.union s1 s2)) t1 t2)
+             (FreeVars TM.empty)
+             a
 
-  -- | internal function for the free variables with starting substitution
-  sbs  :: Visited -> Substitution -> Term a -> Term a
-  default sbs :: (Typeable a, All2 Substitutable (Code a), Generic a) => Visited -> Substitution -> Term a -> Term a
+  -- | Internal function for the free variables with starting substitution. It's
+  -- morally (@@), but with an auxiliary visited set made explicit.
+  sbs         :: Visited -> Substitution -> Term a -> Term a
+  default sbs :: (Typeable a, All2 Substitutable (Code a), Generic a)
+              => Visited -> Substitution -> Term a -> Term a
   sbs _       _ v@(Con _) = v
   sbs visited s v@(Var i) =
     case lookup @a i s of
@@ -308,51 +320,32 @@ class Substitutable a where
   sbs visited s (Rec sop) = Rec $ hcmap (Proxy @Substitutable) (sbs visited s) sop
 
 instance {-# overlaps #-} Substitutable Int where
-  -- TODO: decide an interface for @@ vs sbs
-  s @@ (Var i) = maybe (Var i) id (lookup i s)
-  _ @@ (Con i) = Con i
-  _ @@ (Rec _) = errorRecOnSimpleTypes
+  s @@ v = sbs mempty s v
   ftv (Var i)  = FreeVars $ TM.one @Int (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
   ftv (Rec _)  = errorRecOnSimpleTypes
-  sbs = undefined
+  sbs _       _ v@(Con _) = v
+  sbs visited s v@(Var i) =
+    case lookup @Int i s of
+      Just v'
+        | memberVisited @Int i visited -> error "Inf"
+        | otherwise                    -> sbs (insertVisited @Int i visited) s v'
+      Nothing -> v
+  sbs _ _ (Rec _) = errorRecOnSimpleTypes
 
 instance {-# overlaps #-} Substitutable Char where
-  -- TODO: decide an interface for @@ vs sbs
-  s @@ (Var i) = maybe (Var i) id (lookup i s)
-  _ @@ (Con c) = Con c
-  _ @@ (Rec _) = errorRecOnSimpleTypes
+  s @@ v = sbs mempty s v
   ftv (Var i)  = FreeVars $ TM.one @Char (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
   ftv (Rec _)  = errorRecOnSimpleTypes
-  sbs = undefined
+  sbs _       _ v@(Con _) = v
+  sbs visited s v@(Var i) =
+    case lookup @Char i s of
+      Just v'
+        | memberVisited @Char i visited -> error "Inf"
+        | otherwise                     -> sbs (insertVisited @Char i visited) s v'
+      Nothing -> v
+  sbs _ _ (Rec _) = errorRecOnSimpleTypes
 
 instance {-# overlappable #-}
-  -- TODO: decide an interface for @@ vs sbs
   (Typeable a, All2 Substitutable (Code a), Generic a) => Substitutable a where
---   s @@ (Var i) = maybe (Var i) id (lookup i s)
---   _ @@ (Con i) = Con i
---   s @@ (Rec w) = Rec $ hcmap (Proxy @Substitutable) (s @@) w
---   ftv (Var i)  = FreeVars $ TM.one @a (Const $ IS.singleton i)
---   ftv (Con _)  = FreeVars $ TM.empty
---   ftv (Rec w)  =
---     let a :: [FreeVars] = hcollapse $ hcmap (Proxy @Substitutable) (K . ftv) w
---     in foldl (\(FreeVars t1) (FreeVars t2) -> FreeVars $ TM.unionWith (\(Const s1) (Const s2) -> Const (IS.union s1 s2)) t1 t2) (FreeVars TM.empty) a
---   sbs _       _ v@(Con _) = v
---   sbs visited s v@(Var i) =
---     case lookup @a i s of
---       Just v'
---         | memberVisited @a i visited -> error "Inf"
---         | otherwise                  -> sbs (insertVisited @a i visited) s v'
---       Nothing -> v
---   sbs visited s (Rec sop) = Rec $ hcmap (Proxy @Substitutable) (sbs visited s) sop
-
--- I will remove this instance, now that @@ is just union for substitutions. I
--- can call the ftv function on substitution differently.
--- instance Substitutable Substitution where
---   s1 @@ s2 = s1 `union` s2
---   ftv s    = fold ftv s
---   sbs      = undefined
-
-substFtv :: Substitution -> FreeVars
-substFtv s = fold ftv s
