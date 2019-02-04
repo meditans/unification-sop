@@ -32,6 +32,7 @@ module Generic.Unification.Substitution
   , lookup
   , union
   , fold
+  , substFtv
     -- * The substitutable class
   , Substitutable (..)
     -- * Other type-indexed structures
@@ -135,9 +136,6 @@ singleton i t = insert i t empty
 -- TODO: Move the examples
 -- ex_substitution2 :: Substitution
 -- ex_substitution2 = insert @Foo 1 ex5' empty
-
--- >>> ex_substitution
--- Substitution { Int -> fromList [(1,Con 1000)], Char -> fromList [(1,Con 'c')] }
 
 -- | Search for a variable in the substitution
 --
@@ -282,10 +280,32 @@ class Substitutable a where
   -- TODO: decide an interface for @@ vs sbs
   -- | apply a substitution
   (@@) :: Substitution -> Term a -> Term a
+  default (@@) :: (Typeable a, All2 Substitutable (Code a), Generic a) => Substitution -> Term a -> Term a
+  -- s @@ (Var i) = maybe (Var i) id (lookup i s)
+  -- _ @@ (Con i) = Con i
+  -- s @@ (Rec w) = Rec $ hcmap (Proxy @Substitutable) (s @@) w
+  s @@ v = _what -- sbs empty s v
+
   -- | the free variables in something
   ftv  :: Term a -> FreeVars
+  default ftv :: (Typeable a, All2 Substitutable (Code a), Generic a) => Term a -> FreeVars
+  ftv (Var i)  = FreeVars $ TM.one @a (Const $ IS.singleton i)
+  ftv (Con _)  = FreeVars $ TM.empty
+  ftv (Rec w)  =
+    let a :: [FreeVars] = hcollapse $ hcmap (Proxy @Substitutable) (K . ftv) w
+    in foldl (\(FreeVars t1) (FreeVars t2) -> FreeVars $ TM.unionWith (\(Const s1) (Const s2) -> Const (IS.union s1 s2)) t1 t2) (FreeVars TM.empty) a
+
   -- | internal function for the free variables with starting substitution
   sbs  :: Visited -> Substitution -> Term a -> Term a
+  default sbs :: (Typeable a, All2 Substitutable (Code a), Generic a) => Visited -> Substitution -> Term a -> Term a
+  sbs _       _ v@(Con _) = v
+  sbs visited s v@(Var i) =
+    case lookup @a i s of
+      Just v'
+        | memberVisited @a i visited -> error "Inf"
+        | otherwise                  -> sbs (insertVisited @a i visited) s v'
+      Nothing -> v
+  sbs visited s (Rec sop) = Rec $ hcmap (Proxy @Substitutable) (sbs visited s) sop
 
 instance {-# overlaps #-} Substitutable Int where
   -- TODO: decide an interface for @@ vs sbs
@@ -310,22 +330,22 @@ instance {-# overlaps #-} Substitutable Char where
 instance {-# overlappable #-}
   -- TODO: decide an interface for @@ vs sbs
   (Typeable a, All2 Substitutable (Code a), Generic a) => Substitutable a where
-  s @@ (Var i) = maybe (Var i) id (lookup i s)
-  _ @@ (Con i) = Con i
-  s @@ (Rec w) = Rec $ hcmap (Proxy @Substitutable) (s @@) w
-  ftv (Var i)  = FreeVars $ TM.one @a (Const $ IS.singleton i)
-  ftv (Con _)  = FreeVars $ TM.empty
-  ftv (Rec w)  =
-    let a :: [FreeVars] = hcollapse $ hcmap (Proxy @Substitutable) (K . ftv) w
-    in foldl (\(FreeVars t1) (FreeVars t2) -> FreeVars $ TM.unionWith (\(Const s1) (Const s2) -> Const (IS.union s1 s2)) t1 t2) (FreeVars TM.empty) a
-  sbs _       _ v@(Con _) = v
-  sbs visited s v@(Var i) =
-    case lookup @a i s of
-      Just v'
-        | memberVisited @a i visited -> error "Inf"
-        | otherwise                  -> sbs (insertVisited @a i visited) s v'
-      Nothing -> v
-  sbs visited s (Rec sop) = Rec $ hcmap (Proxy @Substitutable) (sbs visited s) sop
+--   s @@ (Var i) = maybe (Var i) id (lookup i s)
+--   _ @@ (Con i) = Con i
+--   s @@ (Rec w) = Rec $ hcmap (Proxy @Substitutable) (s @@) w
+--   ftv (Var i)  = FreeVars $ TM.one @a (Const $ IS.singleton i)
+--   ftv (Con _)  = FreeVars $ TM.empty
+--   ftv (Rec w)  =
+--     let a :: [FreeVars] = hcollapse $ hcmap (Proxy @Substitutable) (K . ftv) w
+--     in foldl (\(FreeVars t1) (FreeVars t2) -> FreeVars $ TM.unionWith (\(Const s1) (Const s2) -> Const (IS.union s1 s2)) t1 t2) (FreeVars TM.empty) a
+--   sbs _       _ v@(Con _) = v
+--   sbs visited s v@(Var i) =
+--     case lookup @a i s of
+--       Just v'
+--         | memberVisited @a i visited -> error "Inf"
+--         | otherwise                  -> sbs (insertVisited @a i visited) s v'
+--       Nothing -> v
+--   sbs visited s (Rec sop) = Rec $ hcmap (Proxy @Substitutable) (sbs visited s) sop
 
 -- I will remove this instance, now that @@ is just union for substitutions. I
 -- can call the ftv function on substitution differently.
