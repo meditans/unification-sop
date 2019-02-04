@@ -120,10 +120,6 @@ fooS ts tf = Rec . SOP . S . Z $ ts :* tf :* Nil
 fooI :: Term Int -> Term Foo
 fooI ti = Rec . SOP . Z $ ti :* Nil
 
--- $example
--- >>> 2 + 3
--- 4
-
 -- $unification
 --
 -- Now some examples of unification
