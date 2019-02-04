@@ -192,7 +192,7 @@ runLogic l = runIdentity . down . sols . runUnificationT $ unLogic l
 evalLogic :: Logic a -> [a]
 evalLogic l = runIdentity . fmap (Prelude.map fst . rights) . down . sols . runUnificationT $ unLogic l
 
-(===) :: Unifiable a => a -> a -> Logic a
+(===) :: Unifiable a => Term a -> Term a -> Logic (Term a)
 a === b = Logic (unifyVal a b)
 
 --------------------------------------------------------------------------------
@@ -216,7 +216,7 @@ dict =
   , pair (Con 1) (Con 4)
   ]
 
-memb :: (Unifiable (Term a)) => Term a -> [Term a] -> Logic (Term a)
+memb :: (Unifiable a) => Term a -> [Term a] -> Logic (Term a)
 memb _ []     = flop
 memb a (b:bs) = a === b `amb` memb a bs
 

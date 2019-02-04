@@ -13,13 +13,9 @@
 --
 --------------------------------------------------------------------------------
 
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE TypeOperators              #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances                   #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, ScopedTypeVariables       #-}
+{-# LANGUAGE TypeApplications, TypeOperators, UndecidableInstances #-}
 
 module Generic.Unification.Unification
   ( UnificationError(..)
@@ -40,6 +36,8 @@ import Generic.Unification.Term
 import Generic.Unification.Term.Internal (errorRecOnSimpleTypes)
 import Generic.Unification.Substitution
 import qualified Generic.Unification.Substitution as Subst (empty, singleton, lookup)
+
+
 
 -- | An error to encode what could go wrong in the unification procedure: it may
 -- fail, or it may fail a occur check.
@@ -62,7 +60,7 @@ runUnificationT :: (Monad m) => UnificationT m a -> m (Either UnificationError (
 runUnificationT = runExceptT . ($ Subst.empty) . runStateT . unUnificationT
 
 -- | Convenience function to run the unification of two terms
-unify :: (Monad m, Unifiable a) => a -> a -> m (Either UnificationError a)
+unify :: (Monad m, Unifiable a) => Term a -> Term a -> m (Either UnificationError (Term a))
 unify a b = evalUnificationT (unifyVal a b)
 
 --------------------------------------------------------------------------------
@@ -73,10 +71,10 @@ unify a b = evalUnificationT (unifyVal a b)
 -- the library is not supposed to add instances to this class.
 class (Substitutable a) => Unifiable a where
   {-# minimal unifyVal #-}
-  unifyVal :: (Monad m) => a -> a -> UnificationT m a
-  uni :: (Monad m) => Substitution -> a -> a -> UnificationT m a
+  unifyVal :: (Monad m) => Term a -> Term a -> UnificationT m (Term a)
+  uni :: (Monad m) => Substitution -> Term a -> Term a -> UnificationT m (Term a)
 
-instance {-# overlappable #-} Unifiable (Term Int) where
+instance {-# overlappable #-} Unifiable Int where
   unifyVal ta tb = do { st <- get; uni st ta tb }
   uni _ v@(Con a) (Con b)  | a == b     = pure v
                            | otherwise  = throwError IncompatibleUnification
@@ -88,7 +86,7 @@ instance {-# overlappable #-} Unifiable (Term Int) where
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
 
-instance {-# overlappable #-} Unifiable (Term Char) where
+instance {-# overlappable #-} Unifiable Char where
   unifyVal ta tb = do { st <- get; uni st ta tb }
   uni _ v@(Con a) (Con b)  | a == b     = pure v
                            | otherwise  = throwError IncompatibleUnification
@@ -100,7 +98,7 @@ instance {-# overlappable #-} Unifiable (Term Char) where
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
 
-instance {-# overlappable #-} Unifiable (Term String) where
+instance {-# overlappable #-} Unifiable String where
   unifyVal ta tb = do { st <- get; uni st ta tb }
   uni _ v@(Con a) (Con b)  | a == b     = pure v
                            | otherwise  = throwError IncompatibleUnification
@@ -114,11 +112,11 @@ instance {-# overlappable #-} Unifiable (Term String) where
 
 -- TODO: can I simplify these constraints?
 instance {-# overlappable #-}
-  forall a. (Typeable a, Show a, Eq a, Generic a, Substitutable (Term a), HasDatatypeInfo a
+  forall a. (Typeable a, Show a, Eq a, Generic a, Substitutable a, HasDatatypeInfo a
           , All2 (Compose Show Term) (Code a)
           , All2 (Compose Eq Term) (Code a)
-          , All2 (And (Compose Unifiable Term) (Compose Substitutable Term)) (Code a))
-  => Unifiable (Term a)
+          , All2 (And Unifiable Substitutable) (Code a))
+  => Unifiable a
   where
     unifyVal ta tb = do { st <- get; uni st ta tb }
     uni _ v@(Con a) (Con b)  | a == b     = pure v
@@ -136,8 +134,7 @@ instance {-# overlappable #-}
           emt1  = hexpand (Comp Nothing) mt1
           pairs = hliftA2 unsafePair emt1 t2
         in do
-          s <- hctraverse' (Proxy @(And (Compose Unifiable Term)
-                                   (Compose Substitutable Term)))
+          s <- hctraverse' (Proxy @(And Unifiable Substitutable))
                            (\(Comp (Pair s1 s2)) -> do
                                currSubst <- get
                                uni currSubst s1 s2)
@@ -150,10 +147,11 @@ instance {-# overlappable #-}
 -- | This function binds an int to a term in a substitution. Intended for
 -- private module use.
 bindv
-  :: forall m a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable (Term a), Monad m)
+  :: forall m a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable a, Monad m)
   => Substitution -> Int -> Term a -> UnificationT m (Term a)
 bindv st i t = do
-  put (Subst.singleton i t @@ st)
+  -- TODO Write the <> instance!!!
+  put (Subst.singleton i t `union` st)
   pure t
 
 -- TODO Move the examples
