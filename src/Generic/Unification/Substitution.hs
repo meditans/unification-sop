@@ -289,8 +289,8 @@ class Substitutable a where
   -- | Apply a substitution to a term. This is also where we check for a cycle
   -- to occur, as we don't do the occur check in the unification algorithm to
   -- speed it up.
-  (@@) :: Substitution -> Term a -> Term a
-  default (@@) :: (Typeable a, All2 Substitutable (Code a), Generic a) => Substitution -> Term a -> Term a
+  (@@) :: Substitution -> Term a -> Maybe (Term a)
+  default (@@) :: (Typeable a, All2 Substitutable (Code a), Generic a) => Substitution -> Term a -> Maybe (Term a)
   s @@ v = sbs mempty s v
 
   -- | Calculate the free variables of a term.
@@ -307,30 +307,30 @@ class Substitutable a where
 
   -- | Internal function for the free variables with starting substitution. It's
   -- morally (@@), but with an auxiliary visited set made explicit.
-  sbs         :: Visited -> Substitution -> Term a -> Term a
+  sbs         :: Visited -> Substitution -> Term a -> Maybe (Term a)
   default sbs :: (Typeable a, All2 Substitutable (Code a), Generic a)
-              => Visited -> Substitution -> Term a -> Term a
-  sbs _       _ v@(Con _) = v
+              => Visited -> Substitution -> Term a -> Maybe (Term a)
+  sbs _       _ v@(Con _) = Just v
   sbs visited s v@(Var i) =
     case lookup @a i s of
       Just v'
-        | memberVisited @a i visited -> error "Inf"
+        | memberVisited @a i visited -> Nothing
         | otherwise                  -> sbs (insertVisited @a i visited) s v'
-      Nothing -> v
-  sbs visited s (Rec sop) = Rec $ hcmap (Proxy @Substitutable) (sbs visited s) sop
+      Nothing -> Just v
+  sbs visited s (Rec sop) = Rec <$> hctraverse' (Proxy @Substitutable) (sbs visited s) sop
 
 instance {-# overlaps #-} Substitutable Int where
   s @@ v = sbs mempty s v
   ftv (Var i)  = FreeVars $ TM.one @Int (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
   ftv (Rec _)  = errorRecOnSimpleTypes
-  sbs _       _ v@(Con _) = v
+  sbs _       _ v@(Con _) = Just v
   sbs visited s v@(Var i) =
     case lookup @Int i s of
       Just v'
-        | memberVisited @Int i visited -> error "Inf"
+        | memberVisited @Int i visited -> Nothing
         | otherwise                    -> sbs (insertVisited @Int i visited) s v'
-      Nothing -> v
+      Nothing -> Just v
   sbs _ _ (Rec _) = errorRecOnSimpleTypes
 
 instance {-# overlaps #-} Substitutable Char where
@@ -338,13 +338,13 @@ instance {-# overlaps #-} Substitutable Char where
   ftv (Var i)  = FreeVars $ TM.one @Char (Const $ IS.singleton i)
   ftv (Con _)  = FreeVars $ TM.empty
   ftv (Rec _)  = errorRecOnSimpleTypes
-  sbs _       _ v@(Con _) = v
+  sbs _       _ v@(Con _) = Just v
   sbs visited s v@(Var i) =
     case lookup @Char i s of
       Just v'
-        | memberVisited @Char i visited -> error "Inf"
+        | memberVisited @Char i visited -> Nothing
         | otherwise                     -> sbs (insertVisited @Char i visited) s v'
-      Nothing -> v
+      Nothing -> Just v
   sbs _ _ (Rec _) = errorRecOnSimpleTypes
 
 instance {-# overlappable #-}

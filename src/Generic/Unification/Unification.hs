@@ -186,7 +186,7 @@ a :: UnificationT Identity (Term [Int])
 a = unifyVal (Var 1) (cons (Con 1) (Var 1))
 
 -- I want to trigger the occur check in this
-b :: UnificationT Identity (Term [Int])
+b :: UnificationT Identity (Maybe (Term [Int]))
 b = do
   t <- unifyVal (Var 1) (cons (Con 1) (Var 1))
   s <- get
@@ -196,9 +196,7 @@ b = do
 -- >>> runIdentity $ runUnificationT a
 -- Right (: (Con 1) (Var 1),Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
 -- >>> runIdentity $ runUnificationT b
--- *** Exception: Inf
--- CallStack (from HasCallStack):
---   error, called at src/Generic/Unification/Substitution.hs:317:41 in unification-sop-0.1.0.0-inplace:Generic.Unification.Substitution
+-- Right (Nothing,Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
 
 -- In the second case here I do probably want the occur check to fail in a
 -- controllable way, so I'm modifying the substitution application to term to
