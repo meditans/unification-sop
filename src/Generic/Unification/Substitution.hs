@@ -107,6 +107,13 @@ instance Show Substitution where
         show (typeRep a) ++ " -> " ++ show (toList im)
       wrap a = "Substitution { "  ++ a ++ " }"
 
+instance Semigroup Substitution where
+  -- | In this implementation, the composition of substitution is simply their union.
+  (<>) = union
+instance Monoid Substitution where
+  mempty = empty
+  -- | In this implementation, the composition of substitution is simply their union.
+  mappend = (<>)
 
 -- | The empty substitution, which does not contain variable bindings
 --
