@@ -24,7 +24,7 @@ module Generic.Unification.Unification
   , runUnificationT
   , unify
   , SubstitutableGenConstraints
-  , Unifiable(unifyVal)
+  , Unifiable(unifyVal, checkOccurs)
   ) where
 
 import Generics.SOP hiding (fromList)
@@ -78,8 +78,15 @@ type SubstitutableGenConstraints a =
 -- | This is the class that offers the interface for unification. The user of
 -- the library is not supposed to add instances to this class.
 class (Substitutable a) => Unifiable a where
-  {-# minimal unifyVal #-}
+  {-# minimal unifyVal, checkOccurs #-}
+  -- | Unify two values in the monad. This operation does not perform the occur
+  -- check, for performance reasons and because you may not need it (for example
+  -- when using non-recursive structures). If you want to be sure that your
+  -- terms do not contain cycles, use the following function.
   unifyVal         :: (Monad m) => Term a -> Term a -> UnificationT m (Term a)
+  -- | This function will perform the occurs check, returning an equivalent term
+  -- or a `OccursCheckFailed` exception.
+  checkOccurs :: (Monad m) => Term a -> UnificationT m (Term a)
 
   uni :: (Monad m)
       => Substitution -> Term a -> Term a -> UnificationT m (Term a)
@@ -110,6 +117,11 @@ class (Substitutable a) => Unifiable a where
 
 instance {-# overlappable #-} Unifiable Int where
   unifyVal ta tb = do { st <- get; uni st ta tb }
+  checkOccurs t = do
+    s <- get
+    case s @@ t of
+      Nothing -> throwError OccursCheckFailed
+      Just t2 -> pure t2
   uni _ v@(Con a) (Con b)  | a == b     = pure v
                            | otherwise  = throwError IncompatibleUnification
   uni _ v@(Var i) (Var j)  | i == j     = pure v
@@ -122,6 +134,11 @@ instance {-# overlappable #-} Unifiable Int where
 
 instance {-# overlappable #-} Unifiable Char where
   unifyVal ta tb = do { st <- get; uni st ta tb }
+  checkOccurs t = do
+    s <- get
+    case s @@ t of
+      Nothing -> throwError OccursCheckFailed
+      Just t2 -> pure t2
   uni _ v@(Con a) (Con b)  | a == b     = pure v
                            | otherwise  = throwError IncompatibleUnification
   uni _ v@(Var i) (Var j)  | i == j     = pure v
@@ -134,6 +151,11 @@ instance {-# overlappable #-} Unifiable Char where
 
 instance {-# overlappable #-} Unifiable String where
   unifyVal ta tb = do { st <- get; uni st ta tb }
+  checkOccurs t = do
+    s <- get
+    case s @@ t of
+      Nothing -> throwError OccursCheckFailed
+      Just t2 -> pure t2
   uni _ v@(Con a) (Con b)  | a == b     = pure v
                            | otherwise  = throwError IncompatibleUnification
   uni _ v@(Var i) (Var j)  | i == j     = pure v
@@ -146,6 +168,11 @@ instance {-# overlappable #-} Unifiable String where
 
 instance {-# overlappable #-} SubstitutableGenConstraints a => Unifiable a where
   unifyVal ta tb = do { st <- get; uni st ta tb }
+  checkOccurs t = do
+    s <- get
+    case s @@ t of
+      Nothing -> throwError OccursCheckFailed
+      Just t2 -> pure t2
 
 -- | This function binds an int to a term in a substitution. Intended for
 -- private module use.
@@ -186,18 +213,12 @@ a :: UnificationT Identity (Term [Int])
 a = unifyVal (Var 1) (cons (Con 1) (Var 1))
 
 -- I want to trigger the occur check in this
-b :: UnificationT Identity (Maybe (Term [Int]))
+b :: UnificationT Identity (Term [Int])
 b = do
   t <- unifyVal (Var 1) (cons (Con 1) (Var 1))
-  s <- get
-  let t2 = s @@ t
-  pure t2
+  checkOccurs t
 
 -- >>> runIdentity $ runUnificationT a
 -- Right (: (Con 1) (Var 1),Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
 -- >>> runIdentity $ runUnificationT b
--- Right (Nothing,Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
-
--- In the second case here I do probably want the occur check to fail in a
--- controllable way, so I'm modifying the substitution application to term to
--- return a Maybe Term
+-- Left OccursCheckFailed
