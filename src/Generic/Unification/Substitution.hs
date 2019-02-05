@@ -136,10 +136,6 @@ insert i ta (Substitution subst) =
 singleton :: forall a. (WellFormed a, Typeable a) => Int -> Term a -> Substitution
 singleton i t = insert i t empty
 
--- TODO: Move the examples
--- ex_substitution2 :: Substitution
--- ex_substitution2 = insert @Foo 1 ex5' empty
-
 -- | Search for a variable in the substitution
 --
 -- >>> lookup @Int 1 $ singleton @Int 1 (Con 42)
