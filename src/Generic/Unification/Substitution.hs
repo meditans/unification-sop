@@ -152,8 +152,6 @@ lookup i (Substitution subst) = do
 -- first map if a collision should arise, because I want to use this definition
 -- for the composition of substitutions.
 
--- TODO: can I simplify the internal function signatures?
-
 -- | The union of two substitutions. It has the same bias of union in Data.Map,
 -- if you think a substitution as a [(Type, Value)] map-like structure
 --
@@ -165,7 +163,8 @@ union (Substitution s1) (Substitution s2) = Substitution $ TM.unionWith union' s
     union' :: Constrained WellFormed (IM.IntMap :.: Term) a
            -> Constrained WellFormed (IM.IntMap :.: Term) a
            -> Constrained WellFormed (IM.IntMap :.: Term) a
-    union' (Constrained (Comp m1)) (Constrained (Comp m2))  = Constrained $ Comp (IM.union m1 m2)
+    union' (Constrained (Comp m1)) (Constrained (Comp m2))
+      = Constrained $ Comp (IM.union m1 m2)
 
 --------------------------------------------------------------------------------
 -- Unification
