@@ -8,23 +8,28 @@
 -- Portability :  non-portable
 --
 -- This module implements the unification algorithm described in `Efficient
--- functional Unification and Substitution` by A.Dijkstra. Further optimisations
--- may come in future.
+-- functional Unification and Substitution` by A.Dijkstra. The essential feature
+-- of the algorithm is that it is quite fast, and it dispenses with unification
+-- checks during the unification phase (you can perform it when applying
+-- substitutions directly). Further optimisations may come in future.
 --
 --------------------------------------------------------------------------------
 
-{-# LANGUAGE FlexibleContexts, FlexibleInstances                   #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving, ScopedTypeVariables       #-}
-{-# LANGUAGE TypeApplications, TypeOperators, UndecidableInstances, ConstraintKinds, DefaultSignatures #-}
+{-# LANGUAGE ConstraintKinds, DefaultSignatures, FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances, GeneralizedNewtypeDeriving        #-}
+{-# LANGUAGE ScopedTypeVariables, TypeApplications, TypeOperators #-}
+{-# LANGUAGE UndecidableInstances                                 #-}
 
 module Generic.Unification.Unification
-  ( UnificationError(..)
+  ( -- * The Unifiable typeclass
+    Unifiable(unify, checkOccurs)
+  , SubstitutableGenConstraints
+  , UnificationError(..)
+
+    -- * A concrete transformer
   , UnificationT(..)
   , evalUnificationT
   , runUnificationT
-  , unify
-  , SubstitutableGenConstraints
-  , Unifiable(unifyVal, checkOccurs)
   ) where
 
 import Generics.SOP hiding (fromList)
@@ -38,36 +43,40 @@ import Control.Monad.Identity -- for testing, see below
 import Generic.Unification.Term
 import Generic.Unification.Term.Internal (errorRecOnSimpleTypes)
 import Generic.Unification.Substitution
-import qualified Generic.Unification.Substitution as Subst (empty, singleton, lookup)
+import qualified Generic.Unification.Substitution as Subst (singleton, lookup)
 
--- | An error to encode what could go wrong in the unification procedure: it may
--- fail, or it may fail a occur check.
-data UnificationError = IncompatibleUnification | OccursCheckFailed
+-- | Encodes what could go wrong in unification. The monad
+-- `UnificationT` is instance of `MonadError` `UnificationError`.
+data UnificationError =
+  -- | Two terms that were unified have incompatible shapes.
+    IncompatibleUnification
+  -- | A term failed the occurs check (it was cyclic).
+  | OccursCheckFailed
   deriving (Show)
 
--- | A monad for unification
+-- | A monad transformer to capture the threading of a substitution and the
+-- errors that can happen during unification. This is a monad transformer
+-- because you may want to change the monads at the bottom of the stack, for
+-- example to put there a non-determinism monad.
 newtype UnificationT m a
   = Unification
   { unUnificationT :: StateT Substitution (ExceptT UnificationError m) a }
-  -- { unUnification :: ExceptT UnificationError (State Substitution) a }
   deriving (Functor, Applicative, Monad, MonadState Substitution, MonadError UnificationError)
 
--- | Get the result back
+-- | Calculate the result of an UnificationT computation.
 evalUnificationT :: (Monad m) => UnificationT m a -> m (Either UnificationError a)
-evalUnificationT = runExceptT . ($ Subst.empty) . evalStateT . unUnificationT
+evalUnificationT = runExceptT . ($ mempty) . evalStateT . unUnificationT
 
--- | Get the result and the unferlying substitution back
-runUnificationT :: (Monad m) => UnificationT m a -> m (Either UnificationError (a, Substitution))
-runUnificationT = runExceptT . ($ Subst.empty) . runStateT . unUnificationT
-
--- | Convenience function to run the unification of two terms
-unify :: (Monad m, Unifiable a) => Term a -> Term a -> m (Either UnificationError (Term a))
-unify a b = evalUnificationT (unifyVal a b)
+-- | Unwrap UnificationT to its meaning.
+runUnificationT :: (Monad m) => UnificationT m a -> Substitution -> m (Either UnificationError (a, Substitution))
+runUnificationT u s = runExceptT . ($ s) . runStateT . unUnificationT $ u
 
 --------------------------------------------------------------------------------
 -- Unifiable
 --------------------------------------------------------------------------------
 
+-- | A constraint synonym that indicates all the constraints a type should have
+-- to be automatically part of the Unifiable class.
 type SubstitutableGenConstraints a =
   ( Typeable a, Generic a, HasDatatypeInfo a
   , Eq a, Show a, Substitutable a
@@ -78,14 +87,15 @@ type SubstitutableGenConstraints a =
 -- | This is the class that offers the interface for unification. The user of
 -- the library is not supposed to add instances to this class.
 class (Substitutable a) => Unifiable a where
-  {-# minimal unifyVal, checkOccurs #-}
+  {-# minimal unify, checkOccurs #-}
   -- | Unify two values in the monad. This operation does not perform the occur
   -- check, for performance reasons and because you may not need it (for example
   -- when using non-recursive structures). If you want to be sure that your
   -- terms do not contain cycles, use the following function.
-  unifyVal         :: (Monad m) => Term a -> Term a -> UnificationT m (Term a)
+  unify       :: (Monad m) => Term a -> Term a -> UnificationT m (Term a)
   -- | This function will perform the occurs check, returning an equivalent term
-  -- or a `OccursCheckFailed` exception.
+  -- or a `OccursCheckFailed` exception. If you want to explicitly observe the
+  -- occurs check failure, use `@@` from the `Substitutable` class.
   checkOccurs :: (Monad m) => Term a -> UnificationT m (Term a)
 
   uni :: (Monad m)
@@ -116,7 +126,7 @@ class (Substitutable a) => Unifiable a where
   uni _ _ _ = throwError IncompatibleUnification
 
 instance {-# overlappable #-} Unifiable Int where
-  unifyVal ta tb = do { st <- get; uni st ta tb }
+  unify ta tb = do { st <- get; uni st ta tb }
   checkOccurs t = do
     s <- get
     case s @@ t of
@@ -133,7 +143,7 @@ instance {-# overlappable #-} Unifiable Int where
   uni _ _ _                             = errorRecOnSimpleTypes
 
 instance {-# overlappable #-} Unifiable Char where
-  unifyVal ta tb = do { st <- get; uni st ta tb }
+  unify ta tb = do { st <- get; uni st ta tb }
   checkOccurs t = do
     s <- get
     case s @@ t of
@@ -150,7 +160,7 @@ instance {-# overlappable #-} Unifiable Char where
   uni _ _ _                             = errorRecOnSimpleTypes
 
 instance {-# overlappable #-} Unifiable String where
-  unifyVal ta tb = do { st <- get; uni st ta tb }
+  unify ta tb = do { st <- get; uni st ta tb }
   checkOccurs t = do
     s <- get
     case s @@ t of
@@ -167,7 +177,7 @@ instance {-# overlappable #-} Unifiable String where
   uni _ _ _                             = errorRecOnSimpleTypes
 
 instance {-# overlappable #-} SubstitutableGenConstraints a => Unifiable a where
-  unifyVal ta tb = do { st <- get; uni st ta tb }
+  unify ta tb = do { st <- get; uni st ta tb }
   checkOccurs t = do
     s <- get
     case s @@ t of
@@ -180,10 +190,8 @@ bindVar
   :: forall m a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable a, Monad m)
   => Substitution -> Int -> Term a -> UnificationT m (Term a)
 bindVar st i t = do
-  -- TODO Write the <> instance!!!
-  put (Subst.singleton i t `union` st)
+  put (Subst.singleton i t <> st)
   pure t
-
 
 --------------------------------------------------------------------------------
 -- Utilities
@@ -210,12 +218,12 @@ cons :: Term a -> Term [a] -> Term [a]
 cons ta tas = Rec . SOP . S . Z $ ta :* tas :* Nil
 
 a :: UnificationT Identity (Term [Int])
-a = unifyVal (Var 1) (cons (Con 1) (Var 1))
+a = unify (Var 1) (cons (Con 1) (Var 1))
 
 -- I want to trigger the occur check in this
 b :: UnificationT Identity (Term [Int])
 b = do
-  t <- unifyVal (Var 1) (cons (Con 1) (Var 1))
+  t <- unify (Var 1) (cons (Con 1) (Var 1))
   checkOccurs t
 
 -- >>> runIdentity $ runUnificationT a

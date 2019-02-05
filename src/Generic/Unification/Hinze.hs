@@ -187,13 +187,13 @@ newtype Logic a = Logic { unLogic :: UnificationT (CutT Identity) a }
     via StateT Substitution (ExceptT UnificationError (CutT Identity))
 
 runLogic :: Logic a -> [Either UnificationError (a, Substitution)]
-runLogic l = runIdentity . down . sols . runUnificationT $ unLogic l
+runLogic = runIdentity . down . sols . flip runUnificationT mempty . unLogic
 
 evalLogic :: Logic a -> [a]
-evalLogic l = runIdentity . fmap (Prelude.map fst . rights) . down . sols . runUnificationT $ unLogic l
+evalLogic = runIdentity . fmap (Prelude.map fst . rights) . down . sols . flip runUnificationT mempty . unLogic
 
 (===) :: Unifiable a => Term a -> Term a -> Logic (Term a)
-a === b = Logic (unifyVal a b)
+a === b = Logic (unify a b)
 
 --------------------------------------------------------------------------------
 -- Member, logical style
@@ -215,6 +215,9 @@ dict =
   , pair (Con 2) (Con 3)
   , pair (Con 1) (Con 4)
   ]
+
+-- member(X, [X|Y]).
+-- member(X, [_|Y]) :- member(X,Y).
 
 memb :: (Unifiable a) => Term a -> [Term a] -> Logic (Term a)
 memb _ []     = flop
