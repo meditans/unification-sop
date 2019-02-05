@@ -15,7 +15,7 @@
 
 {-# LANGUAGE FlexibleContexts, FlexibleInstances                   #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving, ScopedTypeVariables       #-}
-{-# LANGUAGE TypeApplications, TypeOperators, UndecidableInstances #-}
+{-# LANGUAGE TypeApplications, TypeOperators, UndecidableInstances, ConstraintKinds, DefaultSignatures #-}
 
 module Generic.Unification.Unification
   ( UnificationError(..)
@@ -23,6 +23,7 @@ module Generic.Unification.Unification
   , evalUnificationT
   , runUnificationT
   , unify
+  , SubstitutableGenConstraints
   , Unifiable(unifyVal)
   ) where
 
@@ -32,12 +33,12 @@ import Data.Maybe (isJust, fromJust)
 import Control.Monad.State
 import Control.Monad.Except
 
+import Control.Monad.Identity -- for testing, see below
+
 import Generic.Unification.Term
 import Generic.Unification.Term.Internal (errorRecOnSimpleTypes)
 import Generic.Unification.Substitution
 import qualified Generic.Unification.Substitution as Subst (empty, singleton, lookup)
-
-
 
 -- | An error to encode what could go wrong in the unification procedure: it may
 -- fail, or it may fail a occur check.
@@ -67,12 +68,45 @@ unify a b = evalUnificationT (unifyVal a b)
 -- Unifiable
 --------------------------------------------------------------------------------
 
+type SubstitutableGenConstraints a =
+  ( Typeable a, Generic a, HasDatatypeInfo a
+  , Eq a, Show a, Substitutable a
+  , All2 (Compose Show Term)           (Code a)
+  , All2 (Compose Eq Term)             (Code a)
+  , All2 (And Unifiable Substitutable) (Code a))
+
 -- | This is the class that offers the interface for unification. The user of
 -- the library is not supposed to add instances to this class.
 class (Substitutable a) => Unifiable a where
   {-# minimal unifyVal #-}
-  unifyVal :: (Monad m) => Term a -> Term a -> UnificationT m (Term a)
-  uni :: (Monad m) => Substitution -> Term a -> Term a -> UnificationT m (Term a)
+  unifyVal         :: (Monad m) => Term a -> Term a -> UnificationT m (Term a)
+
+  uni :: (Monad m)
+      => Substitution -> Term a -> Term a -> UnificationT m (Term a)
+  default uni :: (SubstitutableGenConstraints a, Monad m)
+      => Substitution -> Term a -> Term a -> UnificationT m (Term a)
+  uni _ v@(Con a) (Con b)  | a == b     = pure v
+                           | otherwise  = throwError IncompatibleUnification
+  uni _ v@(Var i) (Var j)  | i == j     = pure v
+  uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
+    where
+      mbv = Subst.lookup @a i st
+  uni st (Var i) t         | otherwise  = bindVar st i t
+  uni st t       v@(Var _)              = uni st v t
+  uni _ (Rec t1) (Rec t2)
+    | sameConstructor t1 t2 =
+      let
+        mt1   = hliftA  (Comp . Just) t1
+        emt1  = hexpand (Comp Nothing) mt1
+        pairs = hliftA2 unsafePair emt1 t2
+      in do
+        Rec <$> hctraverse' (Proxy @(And Unifiable Substitutable))
+                            (\(Comp (Pair s1 s2)) -> do
+                               currSubst <- get
+                               uni currSubst s1 s2)
+                            pairs
+    | otherwise = throwError IncompatibleUnification
+  uni _ _ _ = throwError IncompatibleUnification
 
 instance {-# overlappable #-} Unifiable Int where
   unifyVal ta tb = do { st <- get; uni st ta tb }
@@ -82,7 +116,7 @@ instance {-# overlappable #-} Unifiable Int where
   uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
     where
       mbv = Subst.lookup @Int i st
-  uni st (Var i) t         | otherwise  = bindv st i t
+  uni st (Var i) t         | otherwise  = bindVar st i t
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
 
@@ -94,7 +128,7 @@ instance {-# overlappable #-} Unifiable Char where
   uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
     where
       mbv = Subst.lookup @Char i st
-  uni st (Var i) t         | otherwise  = bindv st i t
+  uni st (Var i) t         | otherwise  = bindVar st i t
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
 
@@ -106,50 +140,19 @@ instance {-# overlappable #-} Unifiable String where
   uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
     where
       mbv = Subst.lookup @String i st
-  uni st (Var i) t         | otherwise  = bindv st i t
+  uni st (Var i) t         | otherwise  = bindVar st i t
   uni st t       v@(Var _)              = uni st v t
   uni _ _ _                             = errorRecOnSimpleTypes
 
--- TODO: can I simplify these constraints?
-instance {-# overlappable #-}
-  forall a. (Typeable a, Show a, Eq a, Generic a, Substitutable a, HasDatatypeInfo a
-          , All2 (Compose Show Term) (Code a)
-          , All2 (Compose Eq Term) (Code a)
-          , All2 (And Unifiable Substitutable) (Code a))
-  => Unifiable a
-  where
-    unifyVal ta tb = do { st <- get; uni st ta tb }
-    uni _ v@(Con a) (Con b)  | a == b     = pure v
-                             | otherwise  = throwError IncompatibleUnification
-    uni _ v@(Var i) (Var j)  | i == j     = pure v
-    uni st (Var i) t         | isJust mbv = uni st (fromJust mbv) t
-      where
-        mbv = Subst.lookup @a i st
-    uni st (Var i) t         | otherwise  = bindv st i t
-    uni st t       v@(Var _)              = uni st v t
-    uni _ (Rec t1) (Rec t2)
-      | sameConstructor t1 t2 =
-        let
-          mt1   = hliftA  (Comp . Just) t1
-          emt1  = hexpand (Comp Nothing) mt1
-          pairs = hliftA2 unsafePair emt1 t2
-        in do
-          s <- hctraverse' (Proxy @(And Unifiable Substitutable))
-                           (\(Comp (Pair s1 s2)) -> do
-                               currSubst <- get
-                               uni currSubst s1 s2)
-                           pairs
-          currSubst <- get
-          pure $ currSubst @@ Rec s
-      | otherwise = throwError IncompatibleUnification
-    uni _ _ _ = throwError IncompatibleUnification
+instance {-# overlappable #-} SubstitutableGenConstraints a => Unifiable a where
+  unifyVal ta tb = do { st <- get; uni st ta tb }
 
 -- | This function binds an int to a term in a substitution. Intended for
 -- private module use.
-bindv
+bindVar
   :: forall m a. (Eq a, Eq (Term a), Show (Term a), Typeable a, Substitutable a, Monad m)
   => Substitution -> Int -> Term a -> UnificationT m (Term a)
-bindv st i t = do
+bindVar st i t = do
   -- TODO Write the <> instance!!!
   put (Subst.singleton i t `union` st)
   pure t
@@ -171,3 +174,32 @@ unsafePair (Comp Nothing)   _  = error "Structures should be matched"
 -- Convenience function
 sameConstructor :: SOP a b -> SOP a b -> Bool
 sameConstructor a b = hindex a == hindex b
+
+--------------------------------------------------------------------------------
+-- On not doing the occur check
+--------------------------------------------------------------------------------
+
+cons :: Term a -> Term [a] -> Term [a]
+cons ta tas = Rec . SOP . S . Z $ ta :* tas :* Nil
+
+a :: UnificationT Identity (Term [Int])
+a = unifyVal (Var 1) (cons (Con 1) (Var 1))
+
+-- I want to trigger the occur check in this
+b :: UnificationT Identity (Term [Int])
+b = do
+  t <- unifyVal (Var 1) (cons (Con 1) (Var 1))
+  s <- get
+  let t2 = s @@ t
+  pure t2
+
+-- >>> runIdentity $ runUnificationT a
+-- Right (: (Con 1) (Var 1),Substitution { [Int] -> [(1,: (Con 1) (Var 1))] })
+-- >>> runIdentity $ runUnificationT b
+-- *** Exception: Inf
+-- CallStack (from HasCallStack):
+--   error, called at src/Generic/Unification/Substitution.hs:317:41 in unification-sop-0.1.0.0-inplace:Generic.Unification.Substitution
+
+-- In the second case here I do probably want the occur check to fail in a
+-- controllable way, so I'm modifying the substitution application to term to
+-- return a Maybe Term
