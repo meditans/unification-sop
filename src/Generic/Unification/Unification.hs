@@ -123,7 +123,8 @@ class (Substitutable a) => Unifiable a where
                                uni currSubst s1 s2)
                             pairs
     | otherwise = throwError IncompatibleUnification
-  uni _ _ _ = throwError IncompatibleUnification
+  uni st (Con t1) t2@(Rec _) = uni st (expandTerm t1) t2
+  uni st t1@(Rec _) (Con t2) = uni st t1 (expandTerm t2)
 
 instance {-# overlappable #-} Unifiable Int where
   unify ta tb = do { st <- get; uni st ta tb }

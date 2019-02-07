@@ -22,6 +22,7 @@
 
 module Generic.Unification.Term
   ( Term(..)
+  , expandTerm
   ) where
 
 import           Data.Char ( toLower )
@@ -38,6 +39,9 @@ data Term a
   = Var Int                 -- ^ A logical variable
   | Con a                   -- ^ A constant, determinate value
   | Rec (SOP Term (Code a)) -- ^ The constructor, and recursive terms
+
+expandTerm :: (Generic a) => a -> Term a
+expandTerm = Rec . hmap (\(I a) -> Con a) . from
 
 -- | This is an example we'll use throughout the package
 data Foo = FooI Int | FooS String Foo
