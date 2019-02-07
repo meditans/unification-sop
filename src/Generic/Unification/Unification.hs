@@ -92,11 +92,17 @@ class (Substitutable a) => Unifiable a where
   -- check, for performance reasons and because you may not need it (for example
   -- when using non-recursive structures). If you want to be sure that your
   -- terms do not contain cycles, use the following function.
-  unify       :: (Monad m) => Term a -> Term a -> UnificationT m (Term a)
+  unify         :: (Monad m) => Term a -> Term a -> UnificationT m (Term a)
+  unify ta tb = do { st <- get; uni st ta tb }
   -- | This function will perform the occurs check, returning an equivalent term
   -- or a `OccursCheckFailed` exception. If you want to explicitly observe the
   -- occurs check failure, use `@@` from the `Substitutable` class.
   checkOccurs :: (Monad m) => Term a -> UnificationT m (Term a)
+  checkOccurs t = do
+    s <- get
+    case s @@ t of
+      Nothing -> throwError OccursCheckFailed
+      Just t2 -> pure t2
 
   uni :: (Monad m)
       => Substitution -> Term a -> Term a -> UnificationT m (Term a)
