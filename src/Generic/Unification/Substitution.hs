@@ -38,6 +38,7 @@ module Generic.Unification.Substitution
     -- ** Free Variables
   , FreeVars (..)
   , memberFreeVars
+  , freeVarsOfType
     -- ** Visited Sets
   , Visited (..)
   , memberVisited
@@ -221,6 +222,15 @@ memberFreeVars i (FreeVars tm) =
   case TM.lookup @a tm of
     Just (Const is) -> IS.member i is
     Nothing -> False
+
+-- | Get all the free variables of a type, as variables of that term. This is
+-- made to implement the equivalent of prolog's term_variables.
+freeVarsOfType :: forall a b. (Typeable a, Substitutable b) => Term b -> [Term a]
+freeVarsOfType = get . ftv
+  where
+    get (FreeVars tm) = case TM.lookup @a tm of
+      Nothing         -> []
+      Just (Const is) -> Var <$> IS.toList is
 
 -- | Visited sets: an abstraction in the Dijkstra paper that let us avoid
 -- expensive occurs check in the substitution process, substituting it with
