@@ -1,4 +1,4 @@
-{-# language DeriveGeneric #-}
+{-# language DeriveGeneric, DeriveAnyClass, PatternSynonyms, GADTs #-}
 
 {-|
 
@@ -36,6 +36,8 @@ module Generic.Unification.Tutorial
 
 import Generic.Unification.Term
 import Generic.Unification.Unification
+import Generic.Unification.Substitution
+import Generic.Unification.Hinze
 import qualified GHC.Generics as GHC
 import Generics.SOP
 
@@ -189,3 +191,31 @@ ex_list2_3 = cons (Var 2) (cons (Var 3) (Var 4))
 -- (Right (: (Con 1) (: (Con 1) (: (Var 3) (Var 4)))),Substitution { [Int] -> [(1,: (Var 3) (Var 4)),(4,: (Var 3) (Var 4))], Int -> [(2,Con 1),(3,Con 1)] })
 -- >>> runUnification $ unifyVal ex_list2_2 ex_list2_3 >>= unifyVal ex_list2_1
 -- (Right (: (Con 1) (: (Con 1) (: (Con 1) (: (Con 1) (: (Var 3) (Var 4)))))),Substitution { [Int] -> [(1,: (Var 2) (: (Var 3) (Var 4))),(4,: (Var 3) (Var 4))], Int -> [(2,Con 1),(3,Con 1)] })
+
+--------------------------------------------------------------------------------
+--- Potential problem: recursive datatypes
+--------------------------------------------------------------------------------
+
+data Bar1 = Bar1 Bar2 | Bar1Base
+  deriving (Eq, Show, GHC.Generic, Generic, HasDatatypeInfo, Substitutable, Unifiable)
+data Bar2 = Bar2 Bar1 | Bar2Base
+  deriving (Eq, Show, GHC.Generic, Generic, HasDatatypeInfo, Substitutable, Unifiable)
+
+pattern TBar1 :: Term Bar2 -> Term Bar1
+pattern TBar1 t = Rec (SOP (Z (t :* Nil)))
+pattern TBar1Base :: Term Bar1
+pattern TBar1Base = Rec (SOP (S (Z Nil)))
+pattern TBar2 :: Term Bar1 -> Term Bar2
+pattern TBar2 t = Rec (SOP (Z (t :* Nil)))
+pattern TBar2Base :: Term Bar2
+pattern TBar2Base = Rec (SOP (S (Z Nil)))
+
+exBar1 = TBar2 (Var 1)
+exBar2 = TBar2 (TBar1 (TBar2 (Var 1)))
+
+test :: Logic (Term Bar2)
+test = do
+  exBar1 === exBar2
+
+-- >>> evalLogic test-- <interactive>:208:2: error:
+-- [ bar2 (bar1 (bar2 (Var 1))) ]
