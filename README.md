@@ -33,8 +33,8 @@ improvement on the classic `unification-fd` approach. This also opens the way
 for optimizations, because if in our problems we care only about non-recursive
 data types, we can omit the occurs check while maintaining soundness.
 
-You can find more information in the (WIP) tutorial, or see the haddock
-documentation.
+You can find more information in the (WIP) tutorial, or see the [haddock
+documentation](https://meditans.github.io/unification-sop/index.html).
 
 ### A quick survey of the organization of the code:
 
