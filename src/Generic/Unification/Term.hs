@@ -53,15 +53,6 @@ instance HasDatatypeInfo Foo
 -- TODO: Move the examples
 
 -- | Some example terms (write the prolog equivalent)
-ex1, ex2, ex3, ex4 :: Term Foo
-ex1 = Var 1
-
-ex2 = Con (FooI 3)
-
-ex3 = Rec . SOP . Z $ (Var 1) :* Nil
-
-ex4 = Rec . SOP . S . Z $ (Con "ciao") :* (Con $ FooI 2) :* Nil
-
 -- Now, we can write this term
 acceptable :: Term Foo
 acceptable = Rec . SOP . S . Z $ (Var 1) :* (Var 1) :* Nil

@@ -2,23 +2,25 @@
 
 {-|
 
-  Use unification-sop if you want a mechanism to derive unification for your
-  datatype in a generic way. When talking of unification, the reference
-  implementation is the <http://hackage.haskell.org/package/unification-fd
-  unification-fd> package. However that package has two major shortcomings in my
-  opinion:
+  Use unification-sop if you want a mechanism to generically derive prolog-style
+  unification for your datatypes, with minimal boilerplate.
+
+  When talking of unification, the usual implementation is the
+  <http://hackage.haskell.org/package/unification-fd unification-fd> package.
+  However that package has two major shortcomings in my opinion:
 
   * Your datatype has to be in the form of the fixpoint of a functor.
 
-  * It's not immediately clear how to use it, and the documentation can be
-    daunting.
+  * It's not immediately clear how to use it, the typeclasses and the types
+    involved, and the lack of documentation can be daunting.
 
-   that said, use that package if you are using unification for typechecking
-   (which is the main use-case of that package) because it is surely more stable.
-
-  In this package we will see how to construct a different mechanism for
-  unification which is strictly more expressive, letting us work with datatypes
-  that are not in the fixpoint form.
+  In this package we construct a different mechanism for unification which is
+  strictly more expressive, letting us work with datatypes that are not in the
+  fixpoint form, and simpler, requiring only an additional datatype, and that
+  does not perform abysmally worse (since the core algorithm is the same). That
+  said, try to use `unification-fd` if you want unification for typechecking
+  (which is the main use-case of that package) because it is surely more stable
+  and it still has more optimization than this one (like, path-compression).
 -}
 
 module Generic.Unification.Tutorial
@@ -26,68 +28,98 @@ module Generic.Unification.Tutorial
     -- $introduction
     Foo(..)
     -- $derivingInstances
-  , ex1, ex2
+
+    -- * Examples of Terms
+    -- $termExamples
+  , ex1, ex2, ex3, ex4
     -- * Smart constructors
     -- $smartConstructors
 
     -- * Unification
-    -- $unification
+    -- $unification1
+  , exU1, exU2, exU3
+    -- $unification2
 
-    -- * Discussion
-    -- $discussion
+    -- * Further examples
+    -- $furtherExamples
   ) where
+
+import Control.Monad.Identity
+import Generics.SOP
+import qualified GHC.Generics as GHC
 
 import Generic.Unification.Term
 import Generic.Unification.Unification
 import Generic.Unification.Substitution
 import Generic.Unification.Hinze
-import qualified GHC.Generics as GHC
-import Generics.SOP
+
+
 
 -- $introduction
--- So, let's say you have a datatype, and you want to unify two terms:
+-- Let's consider a datatype we will use as an example through this tutorial:
 
--- | This is an example we'll use throughout the package
 data Foo = FooI Int | FooS String Foo
     deriving ( Show, Eq, GHC.Generic, Generic, HasDatatypeInfo )
 
 -- $derivingInstances
--- The first step is deriving the generic instances. You can do that via
+--
+-- To use this library you need to deriving the generic instances. You
+-- can do that via:
 --
 -- > deriving (GHC.Generic, Generic, HasDatatypeInfo)
 --
 -- provided you have the `DeriveGeneric` and `DeriveAnyClass` extensions enabled
--- (Generic and HasDatatypeInfo come from the generic-sop package).
+-- (Generic and HasDatatypeInfo come from
+-- [generic-sop](http://hackage.haskell.org/package/generics-sop-0.4.0.1)).
+-- That's all the boilerplate you need!
+
+-- $termExamples
 --
--- And now, as your type is a tree which has only primitive types at the leaves,
--- you get to construct generic terms.
+-- Taking inspiration from prolog, we would like to express terms that are of
+-- type Foo, but can have (typed) logical variables as subterms. In this
+-- library, that's the role of the 'Term' datatype. In this case a 'Term' 'Foo' is
+-- a 'Foo' that can have logical variables as subterms.
 --
--- A few examples of terms constructed in this way, with the prolog translation
+-- Let's see some examples, where I also give a prolog translation (haskell
+-- constructors are seen as prolog [clean
+-- representations](https://www.metalevel.at/prolog/data#clean)). Keep in mind
+-- that the show instances that display these result are automatically generated
+-- to be consistent with the smart constructors I'll talk about later.
+
+-- | A logical variable of type `Foo`, equivalent to /X/ in prolog.
 --
--- > ex1 :: Term Foo
--- > ex1 = Var 1           -- X
---
--- > ex2 :: Term Foo
--- > ex2 = Con (FooI 3)          -- fooI 3
---
---
--- >>> ex1 :: Term Foo
+-- >>> ex1
 -- Var 1
--- 
--- >>> ex4 :: Term Foo
--- fooS (Con "ciao") (Con (FooI 2))
-
-
-ex1, ex2, ex3, ex4 :: Term Foo
+ex1 :: Term Foo
 ex1 = Var 1
+
+-- | A completely determined term, in fact expressing `FooI 3` as a `Term Foo`.
+-- Equivalent to /fooI(3)/ in prolog.
+--
+-- >>> ex2
+-- Con (FooI 3)
+ex2 :: Term Foo
 ex2 = Con (FooI 3)
+
+-- | A term which uses the FooI constructor, but the integer inside is replaced
+-- with a logical variable, equivalent to /fooI(X)/ in prolog.
+--
+-- >>> ex3
+-- fooI (Var 1)
+ex3 :: Term Foo
 ex3 = Rec . SOP . Z $ (Var 1) :* Nil
-ex4 = Rec . SOP . S . Z $ (Con "ciao") :* (Con $ FooI 2) :* Nil
+
+-- | A term which mixes both defined values and variables, equivalent to /fooS("hi", X)/ in prolog.
+--
+-- >>> ex4
+-- fooS (Con "hi") (Var 1)
+ex4 :: Term Foo
+ex4 = Rec . SOP . S . Z $ (Con "hi") :* (Var 1) :* Nil
 
 -- $smartConstructors
 --
--- To make more easy working with terms, we propose the usage of smart
--- constructors. For example, for our Foo datatype, we could define:
+-- To make easier working with terms, I propose the usage of smart constructors.
+-- For example, for our Foo datatype, we could define:
 --
 -- > fooS :: Term String -> Term Foo -> Term Foo
 -- > fooS ts tf = Rec . SOP . S . Z $ ts :* tf :* Nil
@@ -98,16 +130,18 @@ ex4 = Rec . SOP . S . Z $ (Con "ciao") :* (Con $ FooI 2) :* Nil
 -- This constructs could be completely generated by the library (via generics or
 -- TH), but in this iteration of the library they have to be generated by the
 -- user. It is worth noting that the show instances I generated are geared
--- towards this use-case, and that is automatic.
+-- towards this use-case, and that is automatic. With there smart constructors
+-- defined, we can actually write previous examples exactly the way they are
+-- shown by our show instance.
 --
--- With there smart constructors defined, we can revisit previous examples:
+-- Depending on your needs, you could also define these as bidirectional
+-- patterns instead, enabling PatternSynonyms and writing:
 --
--- > ex3', ex4', ex5', ex5'var, ex5'var2 :: Term Foo
--- > ex3' = fooI (Var 1)
--- > ex4' = fooS (Con "ciao") (Con $ FooI 2)
--- > ex5' = fooS (Con "ciao") (fooS (Var 1) (Con $ FooI 2))
--- > ex5'var = fooS (Var 2) (fooS (Con "hey") (Con $ FooI 2))
--- > ex5'var2 = fooS (Var 1) (fooS (Con "hey") (Con $ FooI 2))
+-- > pattern TFooI :: Term Int -> Term Foo
+-- > pattern TFooI t = Rec (SOP (Z (t :* Nil)))
+--
+-- > pattern TFooR :: Term String -> Term Foo -> Term Foo
+-- > pattern TFooR ti tf = Rec (SOP (S (Z (ti :* tf :* Nil))))
 
 fooS :: Term String -> Term Foo -> Term Foo
 fooS ts tf = Rec . SOP . S . Z $ ts :* tf :* Nil
@@ -115,30 +149,66 @@ fooS ts tf = Rec . SOP . S . Z $ ts :* tf :* Nil
 fooI :: Term Int -> Term Foo
 fooI ti = Rec . SOP . Z $ ti :* Nil
 
--- $unification
+pattern TFooI :: Term Int -> Term Foo
+pattern TFooI t = Rec (SOP (Z (t :* Nil)))
+
+pattern TFooR :: Term String -> Term Foo -> Term Foo
+pattern TFooR ti tf = Rec (SOP (S (Z (ti :* tf :* Nil))))
+
+
+-- $unification1
 --
--- Now let's have some examples of unification:
+-- Now let's have an example of a unification between two terms:
+
+-- | Equivalent to /fooS(\"Hello\", fooS(X, fooI(Y)))/ in prolog.
 --
--- >>> unify (fooS (Var 2) (fooS (Con "hey") (Con $ FooI 2))) (fooS (Var 1) (fooS (Con "hey") (Con $ FooI 2)))
--- Right (fooS (Var 1) (fooS (Con "hey") (Con (FooI 2))))
+-- >>> exU1
+-- fooS (Con "Hello") (fooS (Var 1) (fooI (Var 1)))
+exU1 :: Term Foo
+exU1 = fooS (Con "Hello") (fooS (Var 1) (fooI (Var 1)))
+
+-- | Equivalent to /fooS(X, fooS(\"World\", fooI(Y)))/ in prolog.
 --
--- Which is `fooS X (fooS "hey" (fooI 2)) == fooS Y (fooS "hey" (fooI 2))` in
--- prolog-like notation. Take a better example here.
--- 
+-- >>> exU2
+-- fooS (Var 2) (fooS (Con "World") (fooI (Var 1)))
+exU2 :: Term Foo
+exU2 = fooS (Var 2) (fooS (Con "World") (fooI (Var 1)))
+
+-- | Equivalent to /fooS(X, fooS(\"Earth\", fooI(Y)))/ in prolog.
+--
+-- >>> exU2
+-- fooS (Var 2) (fooS (Con "World") (fooI (Var 1)))
+exU3 :: Term Foo
+exU3 = fooS (Var 2) (fooS (Con "Earth") (fooI (Var 1)))
+
+-- $unification2
 -- The result of unification can be Right and the substituted term, or Left and
 -- an explanation of the error.
-
--- $discussion
--- Here the differences with unification-fd
--- 
--- TODO Move the examples
-
--- >>> unify ex5' ex5'
--- Right (fooS (Con "ciao") (fooS (Var 1) (Con (FooI 2))))
--- >>> evalUnification $ unifyVal ex5' ex5'var
--- Right (fooS (Con "ciao") (fooS (Con "hey") (Con (FooI 2))))
--- >>> evalUnification $ unifyVal ex5' ex5'var2
+--
+-- >>> :t unify exU1 exU2
+-- unify exU1 exU2 :: Monad m => UnificationT m (Term Foo)
+--
+-- >>> runIdentity . evalUnificationT $ unify exU1 exU2
+-- Right (fooS (Con "Hello") (fooS (Con "World") (fooI (Var 1))))
+--
+-- In this case we can see that the unification succeeded, leaving the Int-typed
+-- variable alone.
+--
+-- >>> runIdentity . evalUnificationT $ unify exU2 exU3
 -- Left IncompatibleUnification
+--
+-- In this case we can see that the two terms can't be unified.
+
+-- $furtherExamples
+--
+-- If you want further inspiration, in the 'Generic.Unification.Hinze' module I
+-- implemented a full typed prolog complete with the Cut construct, following
+-- Hinze's paper on denotational semantic of a prolog interpreter. If you have
+-- question don't hesitate to write them in the github issue tracker.
+
+--------------------------------------------------------------------------------
+-- More stuff, that I don't want yet to talk about
+--------------------------------------------------------------------------------
 
 -- Let's do an example with lists: I need the smart constructors
 nil :: Term [a]
