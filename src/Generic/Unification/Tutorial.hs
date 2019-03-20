@@ -2,20 +2,23 @@
 
 {-|
 
-  Use unification-sop if you want a mechanism to derive unification for
-  datatype. When talking of unification, the reference implementation is the
-  <http://hackage.haskell.org/package/unification-fd unification-fd> package.
-  However that package has two major shortcomings in my opinion:
+  Use unification-sop if you want a mechanism to derive unification for your
+  datatype in a generic way. When talking of unification, the reference
+  implementation is the <http://hackage.haskell.org/package/unification-fd
+  unification-fd> package. However that package has two major shortcomings in my
+  opinion:
 
   * Your datatype has to be in the form of the fixpoint of a functor.
 
-  * It's not immediately clear how to use it, and it has a documentation vacuum.
+  * It's not immediately clear how to use it, and the documentation can be
+    daunting.
 
    that said, use that package if you are using unification for typechecking
    (which is the main use-case of that package) because it is surely more stable.
 
-  In this package we will see how to construct our version of a (finish this)..
-
+  In this package we will see how to construct a different mechanism for
+  unification which is strictly more expressive, letting us work with datatypes
+  that are not in the fixpoint form.
 -}
 
 module Generic.Unification.Tutorial
@@ -42,31 +45,24 @@ import qualified GHC.Generics as GHC
 import Generics.SOP
 
 -- $introduction
--- So, let's say you have a normal datatype, and you want to unify two terms:
-
+-- So, let's say you have a datatype, and you want to unify two terms:
 
 -- | This is an example we'll use throughout the package
 data Foo = FooI Int | FooS String Foo
-    deriving ( Show, Eq, GHC.Generic )
-
-instance Generic Foo
-instance HasDatatypeInfo Foo
+    deriving ( Show, Eq, GHC.Generic, Generic, HasDatatypeInfo )
 
 -- $derivingInstances
--- The first step is deriving the generic instance. You can do that via
+-- The first step is deriving the generic instances. You can do that via
 --
--- > deriving (GHC.Generic)
+-- > deriving (GHC.Generic, Generic, HasDatatypeInfo)
 --
--- then you have to declare the Generic and HasDatatypeInfo instances from the
--- generic-sop package:
---
--- > instance Generic Foo
--- > instance HasDatatypeInfo Foo
+-- provided you have the `DeriveGeneric` and `DeriveAnyClass` extensions enabled
+-- (Generic and HasDatatypeInfo come from the generic-sop package).
 --
 -- And now, as your type is a tree which has only primitive types at the leaves,
 -- you get to construct generic terms.
 --
--- A few examples of terms constructed in this way, with the prolog meaning
+-- A few examples of terms constructed in this way, with the prolog translation
 --
 -- > ex1 :: Term Foo
 -- > ex1 = Var 1           -- X
@@ -84,11 +80,8 @@ instance HasDatatypeInfo Foo
 
 ex1, ex2, ex3, ex4 :: Term Foo
 ex1 = Var 1
-
 ex2 = Con (FooI 3)
-
 ex3 = Rec . SOP . Z $ (Var 1) :* Nil
-
 ex4 = Rec . SOP . S . Z $ (Con "ciao") :* (Con $ FooI 2) :* Nil
 
 -- $smartConstructors
@@ -124,16 +117,16 @@ fooI ti = Rec . SOP . Z $ ti :* Nil
 
 -- $unification
 --
--- Now some examples of unification
+-- Now let's have some examples of unification:
 --
 -- >>> unify (fooS (Var 2) (fooS (Con "hey") (Con $ FooI 2))) (fooS (Var 1) (fooS (Con "hey") (Con $ FooI 2)))
 -- Right (fooS (Var 1) (fooS (Con "hey") (Con (FooI 2))))
 --
--- Which is (fooS X (fooS "hey" (fooI 2))) == fooS Y (fooS "hey" (fooI 2)) in
+-- Which is `fooS X (fooS "hey" (fooI 2)) == fooS Y (fooS "hey" (fooI 2))` in
 -- prolog-like notation. Take a better example here.
 -- 
--- Anyway the result of unification can be Right and the substituted term, or
--- Left and an explanation of the error.
+-- The result of unification can be Right and the substituted term, or Left and
+-- an explanation of the error.
 
 -- $discussion
 -- Here the differences with unification-fd
@@ -214,8 +207,7 @@ exBar1 = TBar2 (Var 1)
 exBar2 = TBar2 (TBar1 (TBar2 (Var 1)))
 
 test :: Logic (Term Bar2)
-test = do
-  exBar1 === exBar2
+test = exBar1 === exBar2
 
--- >>> evalLogic test-- <interactive>:208:2: error:
--- [ bar2 (bar1 (bar2 (Var 1))) ]
+-- >>> evalLogic test
+-- [bar2 (bar1 (bar2 (Var 1)))]
