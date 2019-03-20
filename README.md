@@ -27,6 +27,12 @@ above, `exTermFoo1` would be written in prolog as `fooI(X)`, and `exTermFoo2` as
 `fooR(X, fooI(Y))`, because, since the variables are typed, `Var 1` has type
 `String` in the first case and `Int` in the second.
 
+As an important side effect, you can also talk about unification for types that
+are not structurally recursive: I see this as an important expressive
+improvement on the classic `unification-fd` approach. This also opens the way
+for optimizations, because if in our problems we care only about non-recursive
+data types, we can omit the occurs check while maintaining soundness.
+
 You can find more information in the (WIP) tutorial, or see the haddock
 documentation.
 
