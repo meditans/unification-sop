@@ -26,7 +26,6 @@ module Generic.Unification.Term
   ) where
 
 import           Data.Char ( toLower )
-import qualified GHC.Generics as GHC
 import           Generics.SOP
 import           Text.Show.Combinators
 
@@ -42,39 +41,6 @@ data Term a
 
 expandTerm :: (Generic a) => a -> Term a
 expandTerm = Rec . hmap (\(I a) -> Con a) . from
-
--- | This is an example we'll use throughout the package
-data Foo = FooI Int | FooS String Foo
-    deriving ( Show, Eq, GHC.Generic )
-
-instance Generic Foo
-instance HasDatatypeInfo Foo
-
--- TODO: Move the examples
-
--- | Some example terms (write the prolog equivalent)
--- Now, we can write this term
-acceptable :: Term Foo
-acceptable = Rec . SOP . S . Z $ (Var 1) :* (Var 1) :* Nil
-
--- and this means that the two variables live at different types, so one is the
--- first variable of type String, and the second is the first variable of type
--- Foo.
-
--- | Make the case for smart constructors for terms.
-fooS :: Term String -> Term Foo -> Term Foo
-fooS ts tf = Rec . SOP . S . Z $ ts :* tf :* Nil
-
-fooI :: Term Int -> Term Foo
-fooI ti = Rec . SOP . Z $ ti :* Nil
-
--- Let's write again the examples from before:
-ex3', ex4', ex5', ex5'var, ex5'var2 :: Term Foo
-ex3' = fooI (Var 1)
-ex4' = fooS (Con "ciao") (Con $ FooI 2)
-ex5' = fooS (Con "ciao") (fooS (Var 1) (Con $ FooI 2))
-ex5'var = fooS (Var 2) (fooS (Con "hey") (Con $ FooI 2))
-ex5'var2 = fooS (Var 1) (fooS (Con "hey") (Con $ FooI 2))
 
 -- What remains to be done here is not letting users directly write the ints,
 -- but instead offering a monadic framework in which they can express variables.
